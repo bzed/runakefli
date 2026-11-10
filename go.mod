@@ -1,6 +1,6 @@
 module github.com/bzed/runakefli
 
-go 1.27.3
+go 1.27.4
 
 replace github.com/Azure/azure-sdk-for-go => github.com/Azure/azure-sdk-for-go v68.0.0+incompatible
 
