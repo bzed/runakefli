@@ -9,6 +9,7 @@ changelog (`debian/changelog`) carries the same releases.
 ### Changed
 
 - Built with Go 1.27.4 (security fixes).
+- CI: the nightly soak judges heap growth by the lower-quartile idle floor, so transient in-flight query buffers no longer fail it.
 
 ## [0.15.0] - 2026-11-02
 
