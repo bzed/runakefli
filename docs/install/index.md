@@ -4,8 +4,7 @@ description: Install Rúnakefli on Debian 13 from the signed apt repository, as 
 
 # Installing Rúnakefli
 
-> **Release candidate.** Rúnakefli is feature complete but not yet proven in production. CI builds the packages and
-> images below for every release; the apt suite `trixie-snapshot` follows
+> CI builds the packages and images below for every release; the apt suite `trixie-snapshot` follows
 > `main`.
 
 There are three ways to run Rúnakefli. All of them need a running
@@ -309,7 +308,7 @@ sudo systemctl start runakefli
 
 > **Note:** schema changes ship with a migration (`-schema.migrate`, see
 > below; from schema version 2 it only alters `logs`: no copy, no extra disk
-> space, and existing data is not re-indexed). Rúnakefli is a release candidate: back up the ClickHouse database
+> space, and existing data is not re-indexed). Back up the ClickHouse database
 > before upgrading if your data matters.
 
 ### Uninstall

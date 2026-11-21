@@ -9,15 +9,14 @@
   [![Go Reference](https://pkg.go.dev/badge/github.com/bzed/runakefli.svg)](https://pkg.go.dev/github.com/bzed/runakefli)
   [![Docs](https://img.shields.io/badge/docs-runakefli.app-blue)](https://runakefli.app/)
   [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
-  [![Status: release candidate](https://img.shields.io/badge/status-release%20candidate-yellowgreen)](docs/roadmap.md)
 </div>
 
 ---
 
-> **Release candidate.** Rúnakefli is feature complete and passes the Loki
-> compatibility oracle, but has not yet been proven in production. Packages and
-> images are built from every release. Back up the ClickHouse database before
-> upgrading; schema changes ship with a migration (`-schema.migrate`).
+> Rúnakefli is feature complete, passes the Loki compatibility oracle and is
+> tested in production. Packages and images are built from every release. Back
+> up the ClickHouse database before upgrading; schema changes ship with a
+> migration (`-schema.migrate`).
 
 Rúnakefli (`runakefli` on the command line and in packages) is a single static Go service that speaks
 [Loki](https://grafana.com/oss/loki/)'s HTTP API (push, LogQL queries,

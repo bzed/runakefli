@@ -32,16 +32,15 @@ hide:
 <a href="https://github.com/bzed/runakefli/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/bzed/runakefli/actions/workflows/ci.yml/badge.svg?branch=main"></a>
 <a href="https://codecov.io/gh/bzed/runakefli"><img alt="Code coverage" src="https://codecov.io/gh/bzed/runakefli/branch/main/graph/badge.svg"></a>
 <a href="https://github.com/bzed/runakefli/blob/main/LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-1e4d5c.svg"></a>
-<a href="roadmap/"><img alt="Status: release candidate" src="https://img.shields.io/badge/status-release%20candidate-9c5a09"></a>
 </p>
 
-!!! note "Release candidate"
+!!! note "Production tested"
 
-    Rúnakefli is feature complete and passes the Loki compatibility oracle, but
-    has not yet been proven in production. Debian packages (amd64, arm64) and
-    container images are built from every release. Back up the ClickHouse
-    database before upgrading; schema changes ship with a migration
-    (`-schema.migrate`). See the [installation guide](install/index.md).
+    Rúnakefli is feature complete, passes the Loki compatibility oracle and is
+    tested in production. Debian packages (amd64, arm64) and container images
+    are built from every release. Back up the ClickHouse database before
+    upgrading; schema changes ship with a migration (`-schema.migrate`). See
+    the [installation guide](install/index.md).
 
 ## What is Rúnakefli?
 
@@ -274,9 +273,9 @@ distributed tables.
 
 ### Is Rúnakefli production ready?
 
-It is a release candidate: feature complete and passing the Loki compatibility
-oracle, but not yet proven in production. Back up the ClickHouse database
-before upgrading. See the [roadmap](roadmap.md).
+Yes. It is feature complete, passes the Loki compatibility oracle and is
+tested in production. Back up the ClickHouse database before upgrading. See the
+[roadmap](roadmap.md) for what is still open.
 
 ### How do I know it behaves like Loki?
 
