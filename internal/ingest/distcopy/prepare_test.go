@@ -9,6 +9,7 @@ import (
 	"github.com/grafana/loki/v3/pkg/logproto"
 	"github.com/grafana/loki/v3/pkg/util/constants"
 	"github.com/grafana/loki/v3/pkg/validation"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 
 	"github.com/bzed/runakefli/internal/ingest/distcopy"
@@ -66,10 +67,12 @@ func TestPrepare_TruncatesLongLines(t *testing.T) {
 func TestPrepare_MissingEnforcedLabels(t *testing.T) {
 	o := overrides(t, func(l *validation.Limits) { l.EnforcedLabels = []string{"team"} })
 	now := time.Now()
-	_, err := distcopy.Prepare(context.Background(), o, "t", req(`{a="b"}`, logproto.Entry{Timestamp: now, Line: "x"}), now)
+	res, err := distcopy.Prepare(context.Background(), o, "t", req(`{a="b"}`, logproto.Entry{Timestamp: now, Line: "x"}), now)
 	// With enforced labels missing, this should return an error
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "missing required labels")
+	// A stream rejected for its labels is dropped as a whole, as in Loki.
+	require.Empty(t, res.Streams)
 }
 
 func TestPrepare_IncrementsDuplicateTimestamps(t *testing.T) {
@@ -367,4 +370,42 @@ func TestPrepare_DetectsLogLevelFromOTLPSeverity(t *testing.T) {
 			_ = out[0].Entries[0].StructuredMetadata
 		})
 	}
+}
+
+// discardedSamples sums loki_discarded_samples_total over every label
+// combination of tenant and reason.
+func discardedSamples(t *testing.T, tenant, reason string) float64 {
+	t.Helper()
+	fams, err := prometheus.DefaultGatherer.Gather()
+	require.NoError(t, err)
+	var n float64
+	for _, f := range fams {
+		if f.GetName() != "loki_discarded_samples_total" {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			l := map[string]string{}
+			for _, p := range m.GetLabel() {
+				l[p.GetName()] = p.GetValue()
+			}
+			if l["tenant"] == tenant && l["reason"] == reason {
+				n += m.GetCounter().GetValue()
+			}
+		}
+	}
+	return n
+}
+
+// Labels that do not parse are the one case that keeps the invalid_labels
+// reason; everything else is counted under its specific reason (see
+// ValidateLabels).
+func TestPrepare_UnparsableLabelsAreInvalidLabels(t *testing.T) {
+	o := overrides(t, nil)
+	now := time.Now()
+	r := req(`{a=`, logproto.Entry{Timestamp: now, Line: "x"}, logproto.Entry{Timestamp: now.Add(time.Nanosecond), Line: "y"})
+	res, err := distcopy.Prepare(context.Background(), o, "t-unparsable", r, now)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "error parsing labels")
+	require.Empty(t, res.Streams)
+	require.Equal(t, float64(2), discardedSamples(t, "t-unparsable", "invalid_labels"))
 }

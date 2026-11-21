@@ -1,4 +1,4 @@
-// Copied from grafana/loki@39c256e5 pkg/distributor/validator_test.go
+// Copied from grafana/loki@acaa752c pkg/distributor/validator_test.go
 // (the tests of the functions in validator.go); modifications: package
 // distcopy; validationContext built with runakefli's copy.
 
@@ -15,7 +15,6 @@ import (
 
 	"github.com/grafana/loki/v3/pkg/logproto"
 	"github.com/grafana/loki/v3/pkg/logql/syntax"
-	"github.com/grafana/loki/v3/pkg/util"
 	"github.com/grafana/loki/v3/pkg/validation"
 )
 
@@ -93,10 +92,11 @@ func TestValidator_ValidateEntry(t *testing.T) {
 
 func TestValidator_ValidateLabels(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		userID    string
-		overrides validation.TenantLimits
-		labels    string
+		name           string
+		userID         string
+		overrides      validation.TenantLimits
+		labels         string
+		expectedReason string
 	}{
 		{
 			name:      "test valid",
@@ -105,10 +105,11 @@ func TestValidator_ValidateLabels(t *testing.T) {
 			labels:    "{foo=\"bar\"}",
 		},
 		{
-			name:      "empty",
-			userID:    "test",
-			overrides: nil,
-			labels:    "{}",
+			name:           "empty",
+			userID:         "test",
+			overrides:      nil,
+			labels:         "{}",
+			expectedReason: validation.MissingLabels,
 		},
 		{
 			name:   "test too many labels",
@@ -116,7 +117,8 @@ func TestValidator_ValidateLabels(t *testing.T) {
 			overrides: fakeLimits{
 				&validation.Limits{MaxLabelNamesPerSeries: 2},
 			},
-			labels: "{foo=\"bar\",food=\"bars\",fed=\"bears\"}",
+			labels:         "{foo=\"bar\",food=\"bars\",fed=\"bears\"}",
+			expectedReason: validation.MaxLabelNamesPerSeries,
 		},
 		{
 			name:   "label name too long",
@@ -127,7 +129,8 @@ func TestValidator_ValidateLabels(t *testing.T) {
 					MaxLabelNameLength:     5,
 				},
 			},
-			labels: "{fooooo=\"bar\"}",
+			labels:         "{fooooo=\"bar\"}",
+			expectedReason: validation.LabelNameTooLong,
 		},
 		{
 			name:   "label value too long",
@@ -139,7 +142,8 @@ func TestValidator_ValidateLabels(t *testing.T) {
 					MaxLabelValueLength:    5,
 				},
 			},
-			labels: "{foo=\"barrrrrr\"}",
+			labels:         "{foo=\"barrrrrr\"}",
+			expectedReason: validation.LabelValueTooLong,
 		},
 		{
 			name:   "duplicate label",
@@ -151,22 +155,22 @@ func TestValidator_ValidateLabels(t *testing.T) {
 					MaxLabelValueLength:    5,
 				},
 			},
-			labels: "{foo=\"bar\", foo=\"barf\"}",
+			labels:         "{foo=\"bar\", foo=\"barf\"}",
+			expectedReason: validation.DuplicateLabelNames,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			l := &validation.Limits{}
 			flagext.DefaultValues(l)
-			retentionHours := util.RetentionHours(time.Duration(l.RetentionPeriod))
 			o, err := validation.NewOverrides(*l, tc.overrides)
 			require.NoError(t, err)
 			v, err := NewValidator(o)
 			require.NoError(t, err)
 
 			stream := logproto.Stream{Labels: tc.labels}
-			err = v.ValidateLabels(v.getValidationContextForTime(testTime, tc.userID), mustParseLabels(tc.labels), *logproto.FromStream(stream), retentionHours, "", "loki")
-			// Just check that it doesn't panic
-			_ = err
+			reason, err := v.ValidateLabels(v.getValidationContextForTime(testTime, tc.userID), mustParseLabels(tc.labels), *logproto.FromStream(stream))
+			require.Equal(t, tc.expectedReason, reason)
+			require.Equal(t, tc.expectedReason != "", err != nil)
 		})
 	}
 }

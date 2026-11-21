@@ -13,7 +13,8 @@ import (
 	"github.com/grafana/dskit/user"
 	"github.com/grafana/loki/v3/pkg/logproto"
 	"github.com/grafana/loki/v3/pkg/logql"
-	"github.com/grafana/loki/v3/pkg/logqlmodel"
+	logqlerrors "github.com/grafana/loki/v3/pkg/logql/errors"
+	logqlmodel "github.com/grafana/loki/v3/pkg/logql/model"
 	"github.com/grafana/loki/v3/pkg/validation"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/stretchr/testify/require"
@@ -234,4 +235,23 @@ func floatClose(a, b float64) bool {
 		return true
 	}
 	return math.Abs(a-b) <= 1e-9*math.Abs(a)
+}
+
+// The histogram functions parse but Loki does not evaluate them yet: the
+// mapper must leave them to Loki's engine, which answers with a client error.
+func TestEngine_HistogramQueryIsParseError(t *testing.T) {
+	conn, _ := chtest.New(t)
+	ng := &chstore.Querier{Conn: conn}
+	var l validation.Limits
+	l.RegisterFlags(flag.NewFlagSet("t", flag.PanicOnError))
+	overrides, err := validation.NewOverrides(l, nil)
+	require.NoError(t, err)
+	tierB := logql.NewEngine(logql.EngineOpts{}, ng, overrides, nopLogger{})
+	ctx := user.InjectOrgID(context.Background(), "t1")
+	p, err := logql.NewLiteralParams(`histogram_quantile(0.99, sum by (path) (histogram_over_time({app="api"} | json | unwrap duration_seconds(duration) [5m])))`, time.Now().Add(-time.Hour), time.Now(), time.Minute, 0, logproto.FORWARD, 0, nil, nil)
+	require.NoError(t, err)
+	e := &Engine{Mode: ModeOn, TierB: tierB, TierA: &TierA{Conn: conn, Limits: overrides}, Limits: overrides, Logger: nopLogger{}}
+	_, err = e.Query(ctx, p).Exec(ctx)
+	require.ErrorIs(t, err, logqlerrors.ErrParse)
+	require.ErrorContains(t, err, "histogram functions are experimental and not enabled")
 }

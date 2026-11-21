@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/grafana/loki/v3/pkg/logqlmodel"
-	"github.com/grafana/loki/v3/pkg/logqlmodel/metadata"
+	logqlmodel "github.com/grafana/loki/v3/pkg/logql/model"
+	"github.com/grafana/loki/v3/pkg/logql/model/metadata"
 	"github.com/prometheus/prometheus/promql"
 )
 

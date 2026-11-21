@@ -1,11 +1,14 @@
-// Copied from grafana/loki@39c256e5 pkg/distributor/field_detection_test.go
+// Copied from grafana/loki@acaa752c pkg/distributor/field_detection_test.go
 // (the tests of the functions in field_detection.go); modifications: package
-// distcopy; Distributor-based tests dropped; validationContext built with
+// distcopy; Distributor-based tests dropped; the non-ASCII cases and the
+// benchmark of detectLevelFromLogLine are upstream's, placed in runakefli's
+// trimmed table; validationContext built with
 // runakefli's copy.
 
 package distcopy
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -192,6 +195,16 @@ func Test_detectLogLevelFromLogEntry(t *testing.T) {
 			name:             "non otlp with <FATAL> angle bracket pattern in log line",
 			entry:            "<FATAL> this is a fatal message",
 			expectedLogLevel: constants.LogLevelFatal,
+		},
+		{
+			name:             "non-ASCII text around a bounded keyword",
+			entry:            "größe=ünï [ERROR] fehlgeschlagen — ñ",
+			expectedLogLevel: constants.LogLevelError,
+		},
+		{
+			name:             "non-ASCII character adjacent to keyword is not a boundary",
+			entry:            "éerror erroré",
+			expectedLogLevel: constants.LogLevelUnknown,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -432,6 +445,51 @@ func Test_detectLevelFromLogLine_earliestPosition(t *testing.T) {
 		t.Run(tc.line, func(t *testing.T) {
 			level := detectLevelFromLogLine(tc.line)
 			require.Equal(t, tc.expectedLogLevel, level)
+		})
+	}
+}
+
+func Benchmark_detectLevelFromLogLine(b *testing.B) {
+	longPrefix := strings.Repeat("the quick brown fox jumped over the lazy dog ", 32)
+
+	for _, bm := range []struct {
+		name     string
+		log      string
+		expected string
+	}{
+		{
+			name:     "level at start",
+			log:      "ERROR 1234 --- [main] com.example.App : Application startup failed due to connection refused",
+			expected: constants.LogLevelError,
+		},
+		{
+			name:     "level in middle",
+			log:      "2024-01-01 10:00:00.000 ERROR 1234 --- [main] com.example.App : Application startup failed",
+			expected: constants.LogLevelError,
+		},
+		{
+			name:     "level at end of long line",
+			log:      longPrefix + "info",
+			expected: constants.LogLevelInfo,
+		},
+		{
+			name:     "no level in long line",
+			log:      longPrefix,
+			expected: constants.LogLevelUnknown,
+		},
+		{
+			name:     "unbounded keywords only",
+			log:      "fooerror errorbar misc:error error_code " + longPrefix,
+			expected: constants.LogLevelUnknown,
+		},
+	} {
+		b.Run(bm.name, func(b *testing.B) {
+			b.ReportAllocs()
+			var level string
+			for i := 0; i < b.N; i++ {
+				level = detectLevelFromLogLine(bm.log)
+			}
+			require.Equal(b, bm.expected, level)
 		})
 	}
 }

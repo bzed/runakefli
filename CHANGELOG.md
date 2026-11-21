@@ -10,6 +10,15 @@ changelog (`debian/changelog`) carries the same releases.
 
 - Built with Go 1.27.4 (security fixes).
 - CI: the nightly soak judges heap growth by the lower-quartile idle floor, so transient in-flight query buffers no longer fail it.
+- Pinned Loki commit bumped from `39c256e5` to `acaa752c` (2026-11-20). Inherited from Loki: `stddev_over_time` and `stdvar_over_time` use Kahan summation (results can differ in the last digits); nanosecond offsets (`offset 1ns`) are evaluated correctly; an error in an `ip()` label filter drops the line; `$.field` in `line_format` and `label_format` is extracted; `logfmt` values are kept after a renamed key; leading empty operands of a line-filter chain are ignored; `/format_query` keeps empty groupings and rejects stray characters with 400; query `stats` no longer carry `cache.logResult` and `cache.taskResult`; the histogram functions (`histogram_over_time`, `histogram_quantile` over it) answer 400 "histogram functions are experimental and not enabled", as Loki does, because Loki does not evaluate them yet. Loki removed `limits_config.max_chunks_per_query` (`-store.query-chunk-limit`); Rúnakefli never used it, and `limits_config` ignores unknown keys, so a configuration that still has it keeps working.
+- The divergences list now records the Loki settings and endpoints Rúnakefli does not implement: the `distributor` and `querier` blocks, `limits_config` keys that are accepted but not enforced (`max_query_bytes_read`, `max_querier_bytes_read`, `metric_aggregation_enabled`, per-policy `chunk_idle_period` and `limits_service_streams_expiry`, data-object keys), that the histogram functions cannot be enabled, and that `/config` and `/loki/api/v1/exposed-config` are not served.
+
+### Fixed
+
+- A stream rejected for its labels (too many label names, a label name or value over the limit, a duplicate label, a missing enforced label, ingestion blocked with status 200) was answered with 400 but still written to ClickHouse. It is now dropped as a whole, as in Loki; the other streams of the push are stored.
+- `/labels` and `/detected_labels` leave out Loki's internal labels (`__aggregated_metric__`, `__pattern__`, `__time_shard__`, `__stream_shard__`), as Loki does; the label values endpoint still serves their values.
+- A push rejected for invalid labels counts its samples and bytes once, under the specific reason (`max_label_names_per_series`, `label_name_too_long`, `label_value_too_long`, `duplicate_label_names`, `missing_labels`), in `loki_discarded_samples_total` and `loki_discarded_bytes_total`; it was also counted a second time under `invalid_labels` (Loki fixed the same double count in #26317).
+- Range queries with an offset that is not a whole number of milliseconds (for example `count_over_time({app="web"}[5m] offset 1ns)`) returned an empty result when pushed down to ClickHouse; the output timestamps were a millisecond early. They now match Loki.
 
 ## [0.15.0] - 2026-11-02
 

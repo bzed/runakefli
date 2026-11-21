@@ -24,7 +24,7 @@ func (p legParams) End() time.Time   { return p.end }
 // finer than the largest [range] in expr (offsets are ignored). It returns 0
 // when splitting is disabled.
 //
-// Copied from grafana/loki@39c256e50a804c045d5eb4e3c817a31653b535fe pkg/querier/queryrange/split_by_interval.go
+// Copied from grafana/loki@acaa752c17c1560eead5a33d04d63ed877d4a6de pkg/querier/queryrange/split_by_interval.go
 // (maxRangeVectorAndOffsetDuration); modifications: offset dropped.
 func splitInterval(expr syntax.Expr, configured time.Duration) time.Duration {
 	if configured <= 0 {

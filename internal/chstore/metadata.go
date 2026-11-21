@@ -8,6 +8,7 @@ import (
 	"github.com/grafana/dskit/tenant"
 	"github.com/grafana/loki/v3/pkg/logproto"
 	"github.com/grafana/loki/v3/pkg/logql/syntax"
+	"github.com/grafana/loki/v3/pkg/util/constants"
 	"github.com/prometheus/prometheus/model/labels"
 )
 
@@ -37,7 +38,11 @@ func (q *Querier) Label(ctx context.Context, req *logproto.LabelRequest) (*logpr
 	for _, s := range streams {
 		s.Labels.Range(func(l labels.Label) {
 			if !req.Values {
-				set[l.Name] = struct{}{}
+				// Loki leaves its internal labels out of the names; their
+				// values stay available so that clients can query by them.
+				if !constants.IsInternalLabel(l.Name) {
+					set[l.Name] = struct{}{}
+				}
 			} else if l.Name == req.Name {
 				set[l.Value] = struct{}{}
 			}

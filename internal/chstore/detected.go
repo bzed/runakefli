@@ -12,10 +12,11 @@ import (
 	"github.com/grafana/dskit/tenant"
 	"github.com/grafana/loki/v3/pkg/logproto"
 	"github.com/grafana/loki/v3/pkg/logql/syntax"
+	"github.com/grafana/loki/v3/pkg/util/constants"
 	"github.com/prometheus/prometheus/model/labels"
 )
 
-// Copied from grafana/loki@39c256e5 pkg/querier/querier.go (countLabelsAndCardinality,
+// Copied from grafana/loki@acaa752c pkg/querier/querier.go (countLabelsAndCardinality,
 // shouldRejectLabel, containsAllIDTypes, parsedFields and its methods); modifications:
 // no ingester branch (runakefli is store-only), and the sketch is marshalled via the
 // same method the original uses.
@@ -162,6 +163,9 @@ func (q *Querier) DetectedLabels(ctx context.Context, req *logproto.DetectedLabe
 	values := map[string]map[string]struct{}{}
 	for _, s := range streams {
 		s.Labels.Range(func(l labels.Label) {
+			if constants.IsInternalLabel(l.Name) {
+				return
+			}
 			if values[l.Name] == nil {
 				values[l.Name] = map[string]struct{}{}
 			}

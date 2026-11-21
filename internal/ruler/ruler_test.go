@@ -18,7 +18,7 @@ import (
 	"github.com/go-kit/log"
 	"github.com/grafana/dskit/services"
 	"github.com/grafana/loki/v3/pkg/logql"
-	"github.com/grafana/loki/v3/pkg/logqlmodel"
+	logqlmodel "github.com/grafana/loki/v3/pkg/logql/model"
 	lokiruler "github.com/grafana/loki/v3/pkg/ruler"
 	rulerbase "github.com/grafana/loki/v3/pkg/ruler/base"
 	"github.com/prometheus/client_golang/prometheus"

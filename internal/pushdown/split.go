@@ -8,8 +8,9 @@ import (
 
 	"github.com/grafana/dskit/tenant"
 	"github.com/grafana/loki/v3/pkg/logql"
+	logqlerrors "github.com/grafana/loki/v3/pkg/logql/errors"
+	logqlmodel "github.com/grafana/loki/v3/pkg/logql/model"
 	"github.com/grafana/loki/v3/pkg/logql/syntax"
-	"github.com/grafana/loki/v3/pkg/logqlmodel"
 	"github.com/grafana/loki/v3/pkg/util/constants"
 	"github.com/grafana/loki/v3/pkg/util/httpreq"
 	utilvalidation "github.com/grafana/loki/v3/pkg/util/validation"
@@ -33,7 +34,7 @@ type SplitMetrics struct{ partitions prometheus.Histogram }
 
 // NewSplitMetrics registers loki_query_frontend_partitions on r.
 //
-// Copied from grafana/loki@39c256e50a804c045d5eb4e3c817a31653b535fe pkg/querier/queryrange/split_by_interval.go;
+// Copied from grafana/loki@acaa752c17c1560eead5a33d04d63ed877d4a6de pkg/querier/queryrange/split_by_interval.go;
 // modifications: type and field names, registered by the caller's registerer.
 func NewSplitMetrics(r prometheus.Registerer) *SplitMetrics {
 	return &SplitMetrics{
@@ -74,7 +75,7 @@ type splitQuery struct {
 // seriesLimitPartialResultsWarning returns the warning of a query that returns partial results
 // because it reached the series limit.
 //
-// Copied from grafana/loki@39c256e50a804c045d5eb4e3c817a31653b535fe pkg/logql/engine.go; modifications: none.
+// Copied from grafana/loki@acaa752c17c1560eead5a33d04d63ed877d4a6de pkg/logql/engine.go; modifications: none.
 func seriesLimitPartialResultsWarning(maxSeries int) string {
 	return fmt.Sprintf("maximum number of series (%d) reached for a single query; returning partial results", maxSeries)
 }
@@ -143,7 +144,7 @@ func (q *splitQuery) Exec(ctx context.Context) (logqlmodel.Result, error) {
 			return unsplit()
 		}
 	} else if over {
-		return logqlmodel.Result{}, logqlmodel.NewSeriesLimitError(maxSeries)
+		return logqlmodel.Result{}, logqlerrors.NewSeriesLimitError(maxSeries)
 	}
 	return merged, nil
 }
