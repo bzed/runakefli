@@ -7,12 +7,14 @@
 // Kafka paths removed; labelCache inlined; processStreamEntries takes a
 // context; Prepare returns the kept bytes/lines for rate limiting (Loki's
 // rlBuckets accounting, tenant bucket only); ReportDiscarded records the
-// rate-limited discard metrics.
+// rate-limited discard metrics; the 400 or blocked-ingestion status travels in
+// Result.Status instead of an httpgrpc error.
 package distcopy
 
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -115,23 +117,43 @@ type Result struct {
 	Streams []logproto.Stream
 	Bytes   int
 	Lines   int
+	// Status is the HTTP status for the validation error Prepare returns:
+	// 400, or the tenant's block_ingestion_status_code when the only problem
+	// is blocked ingestion (a 400 takes precedence, as in Loki). Zero when
+	// Prepare returns no error.
+	Status int
+}
+
+// blockedStatusCode returns the status a blocked push is answered with. Loki does
+// not validate block_ingestion_status_code; a code net/http cannot write is
+// answered with 500 instead of panicking.
+func blockedStatusCode(code int) int {
+	if code < 100 || code > 999 {
+		return http.StatusInternalServerError
+	}
+	return code
 }
 
 // Prepare validates and normalises the push request, the way the Loki distributor does,
 // and returns the streams that survive validation with discovered fields applied.
-// validationErr is non-nil when any entry or stream was rejected; its message matches
-// Loki's. Kept entries of rejected streams are still returned, as in Loki.
+// The returned error is non-nil when any entry or stream was rejected; its message matches
+// Loki's and Result.Status carries the status to answer with. Kept entries of
+// rejected streams are still returned, as in Loki.
 func Prepare(ctx context.Context, limits *validation.Overrides, tenantID string, req *logproto.InternalPushRequest, now time.Time) (Result, error) {
 	if len(req.Streams) == 0 {
-		return Result{}, fmt.Errorf(validation.MissingStreamsErrorMsg)
+		return Result{Status: http.StatusBadRequest}, fmt.Errorf(validation.MissingStreamsErrorMsg)
 	}
 	p := &preparer{validator: &Validator{Overrides: limits}}
 	vctx := p.validator.getValidationContextForTime(now, tenantID)
 	fieldDetector := newFieldDetector(vctx)
 	tenantsRetention := retention.NewTenantsRetention(limits)
 
-	var validationErrors util.GroupedErrors
-	var res Result
+	var (
+		validationErrors util.GroupedErrors
+		blockedErr       error
+		blockedStatus    int
+		res              Result
+	)
 
 	for i := range req.Streams {
 		stream := &req.Streams[i]
@@ -156,25 +178,26 @@ func Prepare(ctx context.Context, limits *validation.Overrides, tenantID string,
 			if missing, lbsMissing := missingEnforcedLabels(lbs, vctx.enforcedLabels); missing {
 				err := fmt.Errorf(validation.MissingEnforcedLabelsErrorMsg, strings.Join(lbsMissing, ","), tenantID, stream.Labels, "")
 				validationErrors.Add(err)
-				p.validator.reportDiscardedData(ctx, validation.MissingEnforcedLabels, vctx, lbs, "", "", nestedStreamSize(*stream), stream.EntryCount(), "")
+				p.validator.reportDiscardedData(ctx, validation.MissingEnforcedLabels, vctx, lbs, retentionHours, "", nestedStreamSize(*stream), stream.EntryCount(), "")
 				req.Streams[i] = logproto.InternalStreamAdapter{}
 				continue
 			}
 		}
 
 		if block, statusCode, reason, err := p.validator.ShouldBlockIngestion(vctx, now, ""); block {
-			if statusCode == 200 {
-				p.validator.reportDiscardedData(ctx, reason, vctx, lbs, "", "", nestedStreamSize(*stream), stream.EntryCount(), "")
-				req.Streams[i] = logproto.InternalStreamAdapter{}
-				continue
+			p.validator.reportDiscardedData(ctx, reason, vctx, lbs, retentionHours, "", nestedStreamSize(*stream), stream.EntryCount(), "")
+			req.Streams[i] = logproto.InternalStreamAdapter{}
+			if statusCode != http.StatusOK {
+				// Kept out of validationErrors, so the client gets the block's
+				// status code rather than a 400, as in Loki.
+				blockedErr, blockedStatus = err, statusCode
 			}
-			p.validator.reportDiscardedData(ctx, reason, vctx, lbs, "", "", nestedStreamSize(*stream), stream.EntryCount(), "")
-			return Result{}, err
+			continue
 		}
 
-		stats, err := p.processStreamEntries(ctx, vctx, stream, lbs, fieldDetector, &validationErrors)
+		stats, err := p.processStreamEntries(ctx, vctx, stream, lbs, retentionHours, fieldDetector, &validationErrors)
 		if err != nil {
-			return Result{}, err
+			return Result{Status: http.StatusBadRequest}, err
 		}
 		if stream.EntryCount() > 0 {
 			res.Bytes += stats.unexpandedSize
@@ -194,25 +217,30 @@ func Prepare(ctx context.Context, limits *validation.Overrides, tenantID string,
 		res.Streams = append(res.Streams, s.FlatView())
 	}
 
-	var validationErr error
-	if validationErrors.Err() != nil {
-		validationErr = fmt.Errorf("%s", validationErrors.Error())
+	switch {
+	case validationErrors.Err() != nil:
+		res.Status = http.StatusBadRequest
+		return res, fmt.Errorf("%s", validationErrors.Error())
+	case blockedErr != nil:
+		res.Status = blockedStatusCode(blockedStatus)
+		return res, blockedErr
 	}
-	return res, validationErr
+	return res, nil
 }
 
 // ReportDiscarded records Loki's discarded samples and bytes metrics for each
 // stream under the given reason (Loki uses validation.RateLimited for a
-// rejected push).
+// rejected push), with the stream's retention hours.
 func ReportDiscarded(ctx context.Context, limits *validation.Overrides, tenantID, reason string, streams []logproto.Stream, now time.Time) {
 	v := &Validator{Overrides: limits}
 	vctx := v.getValidationContextForTime(now, tenantID)
+	tenantsRetention := retention.NewTenantsRetention(limits)
 	for _, s := range streams {
 		lbs, err := syntax.ParseLabels(s.Labels)
 		if err != nil {
 			continue
 		}
-		v.reportDiscardedData(ctx, reason, vctx, lbs, "", "", nestedStreamSize(*logproto.FromStream(s)), len(s.Entries), "")
+		v.reportDiscardedData(ctx, reason, vctx, lbs, tenantsRetention.RetentionHoursFor(tenantID, lbs), "", nestedStreamSize(*logproto.FromStream(s)), len(s.Entries), "")
 	}
 }
 
@@ -268,6 +296,7 @@ func (p *preparer) processStreamEntries(
 	vContext validationContext,
 	stream *logproto.InternalStreamAdapter,
 	lbs labels.Labels,
+	retentionHours string,
 	fieldDetector *FieldDetector,
 	validationErrors *util.GroupedErrors,
 ) (streamStats, error) {
@@ -292,7 +321,7 @@ func (p *preparer) processStreamEntries(
 			var scopeDiscardReason string
 			for _, entry := range scope.Entries {
 				if reason, err := p.validator.ValidateEntry(vContext, lbs, entry, sharedMetadataSize, sharedMetadataCount); err != nil {
-					p.validator.reportDiscardedData(ctx, reason, vContext, lbs, "", "", util.EntryTotalSize(&entry), 1, "")
+					p.validator.reportDiscardedData(ctx, reason, vContext, lbs, retentionHours, "", util.EntryTotalSize(&entry), 1, "")
 					scopeDiscardReason = reason
 					resourceDiscardReason = reason
 					validationErrors.Add(err)
@@ -337,7 +366,7 @@ func (p *preparer) processStreamEntries(
 			if scopeEntriesKept == 0 {
 				// Charge shared bytes only when the group is emptied, using its last rejection reason.
 				if scopeDiscardReason != "" && scopeMetadata.originalSize > 0 {
-					p.validator.reportDiscardedData(ctx, scopeDiscardReason, vContext, lbs, "", "", scopeMetadata.originalSize, 0, "")
+					p.validator.reportDiscardedData(ctx, scopeDiscardReason, vContext, lbs, retentionHours, "", scopeMetadata.originalSize, 0, "")
 				}
 				continue
 			}
@@ -350,7 +379,7 @@ func (p *preparer) processStreamEntries(
 		resource.ScopeLogs = resource.ScopeLogs[:scopesKept]
 		if scopesKept == 0 {
 			if resourceDiscardReason != "" && resourceMetadata.originalSize > 0 {
-				p.validator.reportDiscardedData(ctx, resourceDiscardReason, vContext, lbs, "", "", resourceMetadata.originalSize, 0, "")
+				p.validator.reportDiscardedData(ctx, resourceDiscardReason, vContext, lbs, retentionHours, "", resourceMetadata.originalSize, 0, "")
 			}
 			continue
 		}

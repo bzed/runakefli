@@ -118,7 +118,8 @@ registry plus the ruler's private registry (when the ruler is enabled).
 | `loki_inflight_requests` | gauge | `method`, `route` | Current number of in-flight requests. |
 | `loki_distributor_bytes_received_total` | counter | `tenant`, `retention_hours`, `is_internal_stream`, `policy`, `format` | Bytes received per push (Loki's shared distributor collectors). |
 | `loki_distributor_lines_received_total` | counter | `tenant`, `is_internal_stream`, `policy`, `format` | Lines received per push (Loki's shared distributor collectors). |
-| `loki_discarded_samples_total` | counter | `tenant`, `reason` | Samples discarded by push validation. |
+| `loki_discarded_samples_total` | counter | `reason`, `tenant`, `retention_hours`, `policy`, `format` | Samples discarded by push validation, rate limiting or the partition limit. `policy` and `format` are always empty. |
+| `loki_discarded_bytes_total` | counter | `reason`, `tenant`, `retention_hours`, `policy`, `format` | Bytes discarded, counted like the samples above. |
 | `go_goroutines`, `process_*`, etc. | — | — | Standard Go runtime metrics from the default registry. |
 | `runakefli_build_info` | gauge | `version` | Build version string. |
 | `runakefli_query_stream_speculations_total` | counter | `result` | Log queries by outcome of the speculative read on a cached stream set. `hit`: the cached stream set was still current, the read started without waiting for the stream lookup; `mismatch`: it was stale and the read was redone; `miss`: no cached set. |

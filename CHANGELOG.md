@@ -6,6 +6,15 @@ changelog (`debian/changelog`) carries the same releases.
 
 ## [Unreleased]
 
+### Changed
+
+- The documentation no longer calls Rúnakefli a release candidate: it is tested in production.
+
+### Fixed
+
+- Blocked ingestion (`block_ingestion_until`) with a status code other than 200 no longer stops at the first stream and answers 400: every stream of the push is counted under `blocked_ingestion` and dropped, and the push is answered with `block_ingestion_status_code` (default 260), as in Loki. A 400 from other validation errors in the same push takes precedence.
+- `loki_discarded_samples_total` and `loki_discarded_bytes_total` carry the stream's `retention_hours` on every discard path (missing enforced labels, blocked ingestion, rate limit, too many partitions, per-entry discards), not only for label validation, as in Loki.
+
 ## [0.16.0] - 2026-11-21
 
 ### Changed
