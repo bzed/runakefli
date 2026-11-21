@@ -202,3 +202,97 @@ func TestPush_InvalidBackfillShard(t *testing.T) {
 	require.NoError(t, conn.QueryRow(context.Background(), "SELECT count() FROM logs WHERE tenant='t-shard'").Scan(&n))
 	require.Zero(t, n)
 }
+
+func TestPush_JSONEdgeCases(t *testing.T) {
+	conn, _ := chtest.New(t)
+	h := &ingest.Handler{Writer: &chstore.Writer{Conn: conn}, Limits: defaultLimits(t), Logger: log.NewNopLogger()}
+	ts := time.Now().UnixNano()
+	v := func(i int64, line string) string { return `["` + itoa(ts+i) + `","` + line + `"]` }
+	for _, tc := range []struct {
+		name string
+		body string
+		want int
+	}{
+		{"unknown stream key", `{"streams":[{"stream":{"app":"web"},"values":[` + v(0, "a") + `],"foo":1}]}`, http.StatusBadRequest},
+		{"null entry is skipped", `{"streams":[{"stream":{"app":"web"},"values":[` + v(0, "a") + `,null,` + v(1, "b") + `]}]}`, http.StatusNoContent},
+		{"numeric timestamp", `{"streams":[{"stream":{"app":"web"},"values":[[` + itoa(ts) + `,"a"]]}]}`, http.StatusBadRequest},
+		{"numeric structured metadata", `{"streams":[{"stream":{"app":"web"},"values":[["` + itoa(ts) + `","a",{"k":1}]]}]}`, http.StatusBadRequest},
+		{"null stream", `{"streams":[{"stream":null,"values":[` + v(0, "a") + `]}]}`, http.StatusBadRequest},
+		{"null label value", `{"streams":[{"stream":{"app":null},"values":[` + v(0, "a") + `]}]}`, http.StatusNoContent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := push(t, h, "t-json", tc.body)
+			require.Equal(t, tc.want, rec.Code, rec.Body.String())
+		})
+	}
+}
+
+// discarded sums loki_discarded_samples_total and loki_discarded_bytes_total
+// over every label combination of tenant and reason (retention_hours differs
+// between the places that report a discard).
+func discarded(t *testing.T, tenant, reason string) (samples, bytes float64) {
+	t.Helper()
+	fams, err := prometheus.DefaultGatherer.Gather()
+	require.NoError(t, err)
+	for _, f := range fams {
+		var dst *float64
+		switch f.GetName() {
+		case "loki_discarded_samples_total":
+			dst = &samples
+		case "loki_discarded_bytes_total":
+			dst = &bytes
+		default:
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			l := map[string]string{}
+			for _, p := range m.GetLabel() {
+				l[p.GetName()] = p.GetValue()
+			}
+			if l["tenant"] == tenant && l["reason"] == reason {
+				*dst += m.GetCounter().GetValue()
+			}
+		}
+	}
+	return samples, bytes
+}
+
+func TestPush_LabelValidationDiscardAccounting(t *testing.T) {
+	conn, _ := chtest.New(t)
+	var l validation.Limits
+	l.RegisterFlags(flag.NewFlagSet("t", flag.PanicOnError))
+	l.MaxLabelNamesPerSeries = 2
+	o, err := validation.NewOverrides(l, nil)
+	require.NoError(t, err)
+	h := &ingest.Handler{Writer: &chstore.Writer{Conn: conn}, Limits: o, Logger: log.NewNopLogger()}
+	ts := time.Now().UnixNano()
+
+	t.Run("too many label names", func(t *testing.T) {
+		body := `{"streams":[{"stream":{"a":"1","b":"2","c":"3"},"values":[["` + itoa(ts) + `","aa"],["` + itoa(ts+1) + `","bbb"],["` + itoa(ts+2) + `","cccc"]]}]}`
+		rec := push(t, h, "t-disc-names", body)
+		require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+		samples, bytes := discarded(t, "t-disc-names", "max_label_names_per_series")
+		require.Equal(t, float64(3), samples)
+		require.Equal(t, float64(9), bytes)
+		// Today the same stream is reported a second time; Task 3 removes it.
+		samples, _ = discarded(t, "t-disc-names", "invalid_labels")
+		require.Equal(t, float64(3), samples)
+	})
+
+	t.Run("no labels", func(t *testing.T) {
+		// Service-name discovery would add a label to the empty stream.
+		var nl validation.Limits
+		nl.RegisterFlags(flag.NewFlagSet("t", flag.PanicOnError))
+		nl.DiscoverServiceName = nil
+		no, err := validation.NewOverrides(nl, nil)
+		require.NoError(t, err)
+		h := &ingest.Handler{Writer: &chstore.Writer{Conn: conn}, Limits: no, Logger: log.NewNopLogger()}
+		body := `{"streams":[{"stream":{},"values":[["` + itoa(ts) + `","a"],["` + itoa(ts+1) + `","b"]]}]}`
+		rec := push(t, h, "t-disc-empty", body)
+		require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+		samples, _ := discarded(t, "t-disc-empty", "missing_labels")
+		require.Equal(t, float64(1), samples)
+		samples, _ = discarded(t, "t-disc-empty", "invalid_labels")
+		require.Equal(t, float64(2), samples)
+	})
+}

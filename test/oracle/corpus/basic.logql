@@ -40,6 +40,9 @@ range:sum by (level) (count_over_time({app="web"} | logfmt [5m]))
 range:sum(rate({app="web"} | logfmt | unwrap bytes(bytes) [1m]))
 range:first_over_time({app="web"} | logfmt | unwrap bytes [5m]) by (pod)
 range:max_over_time({app="api"} | json | unwrap latency_ms [5m]) by (app) > 100
+range:stddev_over_time({app="web"} | logfmt | unwrap duration(duration) [5m]) by (pod)
+range:stdvar_over_time({app="api"} | json | unwrap latency_ms [5m]) by (env)
+range:count_over_time({app="web"} | logfmt | msg = ip("10.0.0.0/8") [5m])
 range:label_replace(sum by (pod) (count_over_time({app="web"}[5m])), "p", "$1", "pod", "(.*)")
 instant:sum by (app) (count_over_time({env="prod"}[1h]))
 instant:{app="web"} |= "error"
