@@ -172,6 +172,8 @@ jobs:
     needs: deploy
     if: ${{ !cancelled() && needs.deploy.result == 'success' }}
     runs-on: ubuntu-24.04
+    # rclone retries for minutes when the store answers 503; do not hang for hours
+    timeout-minutes: 30
     env:
       S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
       S3_BUCKET: ${{ secrets.S3_BUCKET }}
@@ -182,7 +184,7 @@ jobs:
         with:
           name: site
           path: site
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends s3cmd
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends rclone
       - name: Sync the site to the bucket
         run: |
           set -eu
@@ -191,26 +193,25 @@ jobs:
           done
           # an empty or broken site must never wipe the bucket
           [ -s site/index.html ] || { echo "site/index.html is missing" >&2; exit 1; }
-          umask 077
-          cfg="$RUNNER_TEMP/s3cfg"
-          cat > "$cfg" <<EOF
-          [default]
-          access_key = $S3_ACCESS_KEY_ID
-          secret_key = $S3_SECRET_ACCESS_KEY
-          host_base = $S3_ENDPOINT
-          host_bucket = %(bucket)s.$S3_ENDPOINT
-          use_https = True
-          EOF
-          # Upload everything first, then delete the stale objects. Not a plain
-          # `s3cmd sync`: it copies files with identical content (the font
-          # licences) server-side, and that copy request is signed with the V2
-          # scheme, which Backblaze rejects with a 400.
+          # The remote "s3" comes from the environment, so no credentials file exists.
+          export RCLONE_CONFIG_S3_TYPE=s3 RCLONE_CONFIG_S3_PROVIDER=Other \
+            RCLONE_CONFIG_S3_ENDPOINT="https://$S3_ENDPOINT" \
+            RCLONE_CONFIG_S3_ACCESS_KEY_ID="$S3_ACCESS_KEY_ID" \
+            RCLONE_CONFIG_S3_SECRET_ACCESS_KEY="$S3_SECRET_ACCESS_KEY" \
+            RCLONE_CONFIG_S3_NO_CHECK_BUCKET=true
+          # --checksum: transfer only what differs in content (the site is rebuilt
+          # on every run, so modification times say nothing); the packages already
+          # in the bucket are not uploaded again. --no-update-modtime: identical
+          # files are left alone instead of being copied server-side. Backblaze
+          # answers 503 now and then: every request is retried with a backoff
+          # (--low-level-retries) and so is the whole run (--retries), which
+          # only has the files that failed left to do. Uploads are single PUTs
+          # (--s3-upload-cutoff is 200 MiB), not the multipart uploads s3cmd used.
+          sync_opts="--checksum --no-update-modtime --transfers 4 --retries 8 --retries-sleep 30s --low-level-retries 20 --timeout 2m -v --stats 30s"
           # The packages go up before the indexes that list them, so a client
           # never sees an index that names a package which is not there yet.
-          s3cmd -c "$cfg" put --recursive --guess-mime-type --no-mime-magic \
-            site/apt/pool/ "s3://$S3_BUCKET/apt/pool/"
-          s3cmd -c "$cfg" put --recursive --guess-mime-type --no-mime-magic \
-            --exclude 'apt/pool/*' site/ "s3://$S3_BUCKET/"
-          s3cmd -c "$cfg" sync --skip-existing --no-mime-magic --delete-removed \
-            site/ "s3://$S3_BUCKET/"
-          rm -f "$cfg"
+          # shellcheck disable=SC2086 # sync_opts is a list of flags
+          rclone copy $sync_opts site/apt/pool "s3:$S3_BUCKET/apt/pool"
+          # Everything else, then (--delete-after) the stale objects.
+          # shellcheck disable=SC2086
+          rclone sync $sync_opts --delete-after site "s3:$S3_BUCKET"
