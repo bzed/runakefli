@@ -651,3 +651,20 @@ func TestSelectLogs_NeverReadsFinal(t *testing.T) {
 	require.Positive(t, keyset, "no keyset query seen")
 	require.Positive(t, final, "metric query did not use FINAL")
 }
+
+func TestDetectedLabels_HidesInternalLabels(t *testing.T) {
+	conn, _ := chtest.New(t)
+	w := &chstore.Writer{Conn: conn}
+	seed(t, w, "t1",
+		logproto.Stream{Labels: `{app="a"}`, Entries: []logproto.Entry{{Timestamp: t0, Line: "x"}}},
+		logproto.Stream{Labels: `{app="b", __time_shard__="1", __stream_shard__="0", __pattern__="x", __aggregated_metric__="y"}`, Entries: []logproto.Entry{{Timestamp: t0, Line: "x"}}})
+	q := &chstore.Querier{Conn: conn}
+	ctx := user.InjectOrgID(context.Background(), "t1")
+	resp, err := q.DetectedLabels(ctx, &logproto.DetectedLabelsRequest{Start: t0, End: t0.Add(time.Hour)})
+	require.NoError(t, err)
+	var names []string
+	for _, l := range resp.DetectedLabels {
+		names = append(names, l.Label)
+	}
+	require.Equal(t, []string{"app"}, names)
+}

@@ -14,6 +14,7 @@ changelog (`debian/changelog`) carries the same releases.
 
 ### Fixed
 
+- `/labels` and `/detected_labels` leave out Loki's internal labels (`__aggregated_metric__`, `__pattern__`, `__time_shard__`, `__stream_shard__`), as Loki does; the label values endpoint still serves their values.
 - A push rejected for invalid labels counts its samples and bytes once, under the specific reason (`max_label_names_per_series`, `label_name_too_long`, `label_value_too_long`, `duplicate_label_names`, `missing_labels`), in `loki_discarded_samples_total` and `loki_discarded_bytes_total`; it was also counted a second time under `invalid_labels` (Loki fixed the same double count in #26317).
 - Range queries with an offset that is not a whole number of milliseconds (for example `count_over_time({app="web"}[5m] offset 1ns)`) returned an empty result when pushed down to ClickHouse; the output timestamps were a millisecond early. They now match Loki.
 

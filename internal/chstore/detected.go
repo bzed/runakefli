@@ -12,6 +12,7 @@ import (
 	"github.com/grafana/dskit/tenant"
 	"github.com/grafana/loki/v3/pkg/logproto"
 	"github.com/grafana/loki/v3/pkg/logql/syntax"
+	"github.com/grafana/loki/v3/pkg/util/constants"
 	"github.com/prometheus/prometheus/model/labels"
 )
 
@@ -162,6 +163,9 @@ func (q *Querier) DetectedLabels(ctx context.Context, req *logproto.DetectedLabe
 	values := map[string]map[string]struct{}{}
 	for _, s := range streams {
 		s.Labels.Range(func(l labels.Label) {
+			if constants.IsInternalLabel(l.Name) {
+				return
+			}
 			if values[l.Name] == nil {
 				values[l.Name] = map[string]struct{}{}
 			}
