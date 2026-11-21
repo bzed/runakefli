@@ -235,7 +235,7 @@
   border-radius: 2px;
   box-shadow: none;
 }
-/* the release-candidate notice is the one place amber is used for a block */
+/* the status notice on the home page is the one place amber is used for a block */
 .md-typeset .admonition.note,
 .md-typeset details.note {
   border-color: #9c5a09;

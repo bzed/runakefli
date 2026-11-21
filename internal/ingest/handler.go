@@ -86,7 +86,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if verr != nil {
-		http.Error(w, verr.Error(), http.StatusBadRequest)
+		http.Error(w, verr.Error(), res.Status)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

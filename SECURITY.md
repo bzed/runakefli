@@ -1,7 +1,6 @@
 # Security policy
 
-Rúnakefli is a release candidate; only the latest release and `main` are
-supported.
+Only the latest release and `main` are supported.
 
 ## Reporting a vulnerability
 

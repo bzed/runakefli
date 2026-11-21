@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-kit/log"
+	"github.com/grafana/dskit/flagext"
 	"github.com/grafana/dskit/user"
 	"github.com/grafana/loki/v3/pkg/validation"
 	"github.com/prometheus/client_golang/prometheus"
@@ -319,4 +320,38 @@ func TestPush_RejectedStreamIsNotStored(t *testing.T) {
 	require.NoError(t, conn.QueryRow(context.Background(), "SELECT count() FROM logs WHERE tenant = 't-rejected' AND line = 'kept'").Scan(&kept))
 	require.Equal(t, uint64(0), rejected)
 	require.Equal(t, uint64(1), kept)
+}
+
+// Blocked ingestion answers with block_ingestion_status_code after counting
+// every stream of the push (Loki's ingestionBlockedError), and stores nothing.
+func TestPush_BlockedIngestionStatusCode(t *testing.T) {
+	conn, _ := chtest.New(t)
+	var l validation.Limits
+	l.RegisterFlags(flag.NewFlagSet("t", flag.PanicOnError))
+	l.BlockIngestionUntil = flagext.Time(time.Now().Add(time.Hour))
+	l.BlockIngestionStatusCode = 260
+	o, err := validation.NewOverrides(l, nil)
+	require.NoError(t, err)
+	h := &ingest.Handler{Writer: &chstore.Writer{Conn: conn}, Limits: o, Logger: log.NewNopLogger()}
+	ts := time.Now().UnixNano()
+	body := `{"streams":[` +
+		`{"stream":{"app":"a"},"values":[["` + itoa(ts) + `","one"]]},` +
+		`{"stream":{"app":"b"},"values":[["` + itoa(ts+1) + `","two"],["` + itoa(ts+2) + `","three"]]}]}`
+	rec := push(t, h, "t-blocked-status", body)
+	require.Equal(t, 260, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "ingestion blocked")
+	samples, _ := discarded(t, "t-blocked-status", validation.BlockedIngestion)
+	require.Equal(t, float64(3), samples)
+
+	var n uint64
+	require.NoError(t, conn.QueryRow(context.Background(), "SELECT count() FROM logs WHERE tenant = 't-blocked-status'").Scan(&n))
+	require.Equal(t, uint64(0), n)
+}
+
+// A push without streams is a 400, not a panic.
+func TestPush_NoStreamsIsBadRequest(t *testing.T) {
+	conn, _ := chtest.New(t)
+	h := &ingest.Handler{Writer: &chstore.Writer{Conn: conn}, Limits: defaultLimits(t), Logger: log.NewNopLogger()}
+	rec := push(t, h, "t-nostreams", `{"streams":[]}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 }

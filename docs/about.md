@@ -31,6 +31,5 @@ AGPL-3.0-only. See the
 
 ## Status
 
-Rúnakefli is a **release candidate**: it is feature complete and passes the
-Loki compatibility oracle. What is missing before a stable release is
-production experience. See the [roadmap](roadmap.md) for what is still open.
+Rúnakefli is feature complete, passes the Loki compatibility oracle and is
+tested in production. See the [roadmap](roadmap.md) for what is still open.
