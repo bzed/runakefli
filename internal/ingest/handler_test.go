@@ -296,3 +296,27 @@ func TestPush_LabelValidationDiscardAccounting(t *testing.T) {
 		require.Equal(t, float64(0), samples)
 	})
 }
+
+// A stream rejected for its labels is dropped as a whole (as in Loki); the
+// other streams of the push are stored and the push answers 400.
+func TestPush_RejectedStreamIsNotStored(t *testing.T) {
+	conn, _ := chtest.New(t)
+	var l validation.Limits
+	l.RegisterFlags(flag.NewFlagSet("t", flag.PanicOnError))
+	l.MaxLabelNamesPerSeries = 2
+	o, err := validation.NewOverrides(l, nil)
+	require.NoError(t, err)
+	h := &ingest.Handler{Writer: &chstore.Writer{Conn: conn}, Limits: o, Logger: log.NewNopLogger()}
+	ts := time.Now().UnixNano()
+	body := `{"streams":[` +
+		`{"stream":{"a":"1","b":"2","c":"3"},"values":[["` + itoa(ts) + `","rejected"]]},` +
+		`{"stream":{"app":"ok"},"values":[["` + itoa(ts+1) + `","kept"]]}]}`
+	rec := push(t, h, "t-rejected", body)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+
+	var rejected, kept uint64
+	require.NoError(t, conn.QueryRow(context.Background(), "SELECT count() FROM logs WHERE tenant = 't-rejected' AND line = 'rejected'").Scan(&rejected))
+	require.NoError(t, conn.QueryRow(context.Background(), "SELECT count() FROM logs WHERE tenant = 't-rejected' AND line = 'kept'").Scan(&kept))
+	require.Equal(t, uint64(0), rejected)
+	require.Equal(t, uint64(1), kept)
+}

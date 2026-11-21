@@ -148,6 +148,7 @@ func Prepare(ctx context.Context, limits *validation.Overrides, tenantID string,
 		if err != nil {
 			validationErrors.Add(err)
 			p.validator.reportDiscardedData(ctx, labelsReason, vctx, lbs, retentionHours, "", nestedStreamSize(*stream), stream.EntryCount(), "")
+			req.Streams[i] = logproto.InternalStreamAdapter{} // rejected as a whole: not written
 			continue
 		}
 
@@ -156,6 +157,7 @@ func Prepare(ctx context.Context, limits *validation.Overrides, tenantID string,
 				err := fmt.Errorf(validation.MissingEnforcedLabelsErrorMsg, strings.Join(lbsMissing, ","), tenantID, stream.Labels, "")
 				validationErrors.Add(err)
 				p.validator.reportDiscardedData(ctx, validation.MissingEnforcedLabels, vctx, lbs, "", "", nestedStreamSize(*stream), stream.EntryCount(), "")
+				req.Streams[i] = logproto.InternalStreamAdapter{}
 				continue
 			}
 		}
@@ -163,6 +165,7 @@ func Prepare(ctx context.Context, limits *validation.Overrides, tenantID string,
 		if block, statusCode, reason, err := p.validator.ShouldBlockIngestion(vctx, now, ""); block {
 			if statusCode == 200 {
 				p.validator.reportDiscardedData(ctx, reason, vctx, lbs, "", "", nestedStreamSize(*stream), stream.EntryCount(), "")
+				req.Streams[i] = logproto.InternalStreamAdapter{}
 				continue
 			}
 			p.validator.reportDiscardedData(ctx, reason, vctx, lbs, "", "", nestedStreamSize(*stream), stream.EntryCount(), "")
