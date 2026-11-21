@@ -1,6 +1,6 @@
-// Copied from grafana/loki@39c256e5 pkg/distributor/distributor.go
+// Copied from grafana/loki@acaa752c pkg/distributor/distributor.go
 // (processStreamEntries, normalizeMetadataGroup, normalizeStructuredMetadata,
-// parseStreamLabels, truncateLines, missingEnforcedLabels, metadataGroup,
+// parseStreamLabels (Loki's parseAndValidateStreamLabels), truncateLines, missingEnforcedLabels, metadataGroup,
 // newMetadataGroup, duplicateTimestampTracker and the push request loop);
 // modifications: methods turned into functions on a small preparer; rate
 // limiting, writeFailuresManager, metrics, usage tracker, ingester/ring and
@@ -144,28 +144,28 @@ func Prepare(ctx context.Context, limits *validation.Overrides, tenantID string,
 		// Truncate first so subsequent steps have consistent line lengths
 		p.truncateLines(vctx, stream)
 
-		lbs, err := p.parseStreamLabels(vctx, stream.Labels, stream, tenantsRetention)
+		lbs, retentionHours, labelsReason, err := p.parseStreamLabels(vctx, stream.Labels, stream, tenantsRetention)
 		if err != nil {
 			validationErrors.Add(err)
-			p.validator.reportDiscardedDataWithTracker(ctx, validation.InvalidLabels, vctx, labels.EmptyLabels(), "", "", nestedStreamSize(*stream), stream.EntryCount(), "")
+			p.validator.reportDiscardedData(ctx, labelsReason, vctx, lbs, retentionHours, "", nestedStreamSize(*stream), stream.EntryCount(), "")
 			continue
 		}
 
-		if !p.validator.IsInternalStream(lbs) {
+		if !constants.IsInternalStream(lbs.Has) {
 			if missing, lbsMissing := missingEnforcedLabels(lbs, vctx.enforcedLabels); missing {
 				err := fmt.Errorf(validation.MissingEnforcedLabelsErrorMsg, strings.Join(lbsMissing, ","), tenantID, stream.Labels, "")
 				validationErrors.Add(err)
-				p.validator.reportDiscardedDataWithTracker(ctx, validation.MissingEnforcedLabels, vctx, lbs, "", "", nestedStreamSize(*stream), stream.EntryCount(), "")
+				p.validator.reportDiscardedData(ctx, validation.MissingEnforcedLabels, vctx, lbs, "", "", nestedStreamSize(*stream), stream.EntryCount(), "")
 				continue
 			}
 		}
 
 		if block, statusCode, reason, err := p.validator.ShouldBlockIngestion(vctx, now, ""); block {
 			if statusCode == 200 {
-				p.validator.reportDiscardedDataWithTracker(ctx, reason, vctx, lbs, "", "", nestedStreamSize(*stream), stream.EntryCount(), "")
+				p.validator.reportDiscardedData(ctx, reason, vctx, lbs, "", "", nestedStreamSize(*stream), stream.EntryCount(), "")
 				continue
 			}
-			p.validator.reportDiscardedDataWithTracker(ctx, reason, vctx, lbs, "", "", nestedStreamSize(*stream), stream.EntryCount(), "")
+			p.validator.reportDiscardedData(ctx, reason, vctx, lbs, "", "", nestedStreamSize(*stream), stream.EntryCount(), "")
 			return Result{}, err
 		}
 
@@ -209,22 +209,26 @@ func ReportDiscarded(ctx context.Context, limits *validation.Overrides, tenantID
 		if err != nil {
 			continue
 		}
-		v.reportDiscardedDataWithTracker(ctx, reason, vctx, lbs, "", "", nestedStreamSize(*logproto.FromStream(s)), len(s.Entries), "")
+		v.reportDiscardedData(ctx, reason, vctx, lbs, "", "", nestedStreamSize(*logproto.FromStream(s)), len(s.Entries), "")
 	}
 }
 
-// parseStreamLabels parses and validates the stream label string, as the Loki distributor does.
-func (p *preparer) parseStreamLabels(vContext validationContext, key string, stream *logproto.InternalStreamAdapter, tenantsRetention *retention.TenantsRetention) (labels.Labels, error) {
+// parseStreamLabels parses and validates the stream label string, as Loki's
+// parseAndValidateStreamLabels does. It also returns the stream's retention in
+// hours and, with an error, the reason to discard the stream's data for.
+func (p *preparer) parseStreamLabels(vContext validationContext, key string, stream *logproto.InternalStreamAdapter, tenantsRetention *retention.TenantsRetention) (labels.Labels, string, string, error) {
 	ls, err := syntax.ParseLabels(key)
 	if err != nil {
-		return labels.EmptyLabels(), fmt.Errorf(validation.InvalidLabelsErrorMsg, key, err)
+		retentionHours := tenantsRetention.RetentionHoursFor(vContext.userID, labels.EmptyLabels())
+		return labels.EmptyLabels(), retentionHours, validation.InvalidLabels, fmt.Errorf(validation.InvalidLabelsErrorMsg, key, err)
 	}
-	if err := p.validator.ValidateLabels(vContext, ls, *stream, tenantsRetention.RetentionHoursFor(vContext.userID, ls), "", ""); err != nil {
-		return labels.EmptyLabels(), err
+	retentionHours := tenantsRetention.RetentionHoursFor(vContext.userID, ls)
+	if reason, err := p.validator.ValidateLabels(vContext, ls, *stream); err != nil {
+		return labels.EmptyLabels(), retentionHours, reason, err
 	}
 	stream.Labels = ls.String()
 	stream.Hash = labels.StableHash(ls)
-	return ls, nil
+	return ls, retentionHours, "", nil
 }
 
 // missingEnforcedLabels returns true if the stream is missing any of the required labels.
@@ -285,7 +289,7 @@ func (p *preparer) processStreamEntries(
 			var scopeDiscardReason string
 			for _, entry := range scope.Entries {
 				if reason, err := p.validator.ValidateEntry(vContext, lbs, entry, sharedMetadataSize, sharedMetadataCount); err != nil {
-					p.validator.reportDiscardedDataWithTracker(ctx, reason, vContext, lbs, "", "", util.EntryTotalSize(&entry), 1, "")
+					p.validator.reportDiscardedData(ctx, reason, vContext, lbs, "", "", util.EntryTotalSize(&entry), 1, "")
 					scopeDiscardReason = reason
 					resourceDiscardReason = reason
 					validationErrors.Add(err)
@@ -330,7 +334,7 @@ func (p *preparer) processStreamEntries(
 			if scopeEntriesKept == 0 {
 				// Charge shared bytes only when the group is emptied, using its last rejection reason.
 				if scopeDiscardReason != "" && scopeMetadata.originalSize > 0 {
-					p.validator.reportDiscardedDataWithTracker(ctx, scopeDiscardReason, vContext, lbs, "", "", scopeMetadata.originalSize, 0, "")
+					p.validator.reportDiscardedData(ctx, scopeDiscardReason, vContext, lbs, "", "", scopeMetadata.originalSize, 0, "")
 				}
 				continue
 			}
@@ -343,7 +347,7 @@ func (p *preparer) processStreamEntries(
 		resource.ScopeLogs = resource.ScopeLogs[:scopesKept]
 		if scopesKept == 0 {
 			if resourceDiscardReason != "" && resourceMetadata.originalSize > 0 {
-				p.validator.reportDiscardedDataWithTracker(ctx, resourceDiscardReason, vContext, lbs, "", "", resourceMetadata.originalSize, 0, "")
+				p.validator.reportDiscardedData(ctx, resourceDiscardReason, vContext, lbs, "", "", resourceMetadata.originalSize, 0, "")
 			}
 			continue
 		}

@@ -274,9 +274,9 @@ func TestPush_LabelValidationDiscardAccounting(t *testing.T) {
 		samples, bytes := discarded(t, "t-disc-names", "max_label_names_per_series")
 		require.Equal(t, float64(3), samples)
 		require.Equal(t, float64(9), bytes)
-		// Today the same stream is reported a second time; Task 3 removes it.
+		// The stream is reported once, under the specific reason.
 		samples, _ = discarded(t, "t-disc-names", "invalid_labels")
-		require.Equal(t, float64(3), samples)
+		require.Equal(t, float64(0), samples)
 	})
 
 	t.Run("no labels", func(t *testing.T) {
@@ -291,8 +291,8 @@ func TestPush_LabelValidationDiscardAccounting(t *testing.T) {
 		rec := push(t, h, "t-disc-empty", body)
 		require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 		samples, _ := discarded(t, "t-disc-empty", "missing_labels")
-		require.Equal(t, float64(1), samples)
-		samples, _ = discarded(t, "t-disc-empty", "invalid_labels")
 		require.Equal(t, float64(2), samples)
+		samples, _ = discarded(t, "t-disc-empty", "invalid_labels")
+		require.Equal(t, float64(0), samples)
 	})
 }
