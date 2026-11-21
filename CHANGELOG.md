@@ -6,6 +6,10 @@ changelog (`debian/changelog`) carries the same releases.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-21
+
+First stable release: Rúnakefli is tested in production.
+
 ### Changed
 
 - The documentation no longer calls Rúnakefli a release candidate: it is tested in production.

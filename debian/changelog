@@ -1,3 +1,13 @@
+runakefli (1.0.0) trixie; urgency=medium
+
+  * First stable release; the documentation no longer calls Rúnakefli a
+    release candidate.
+  * Blocked ingestion with a non-200 status processes every stream and
+    answers with block_ingestion_status_code, as Loki does.
+  * Discard metrics carry retention_hours on every discard path.
+
+ -- Bernd Zeimetz <bernd@bzed.de>  Sat, 21 Nov 2026 14:09:22 +0100
+
 runakefli (0.16.0) trixie; urgency=medium
 
   * Pinned Loki commit bumped to acaa752c (2026-11-20); see CHANGELOG.md
