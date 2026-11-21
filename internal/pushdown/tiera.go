@@ -281,8 +281,10 @@ func (a *TierA) execRange(ctx context.Context, e *syntax.RangeAggregationExpr, p
 			case syntax.OpRangeTypeBytesRate:
 				val = float64(b) / rangeSec
 			}
-			// Output timestamp in ms: t_shifted/1e6 + offset/1e6
-			ts := tShifted/1e6 + o/1e6
+			// Output timestamp in ms: the step instant t = t_shifted + offset,
+			// truncated once (truncating both terms is a millisecond early for
+			// an offset that is not a whole number of milliseconds).
+			ts := (tShifted + o) / 1e6
 			series.Floats = append(series.Floats, promql.FPoint{T: ts, F: val})
 		}
 		if len(series.Floats) > 0 { // rows only between windows (step > range) emit no series

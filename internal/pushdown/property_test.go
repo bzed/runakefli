@@ -254,3 +254,33 @@ func seedPropData(t *testing.T, w *chstore.Writer) (time.Time, []string, error) 
 	}
 	return start, words, nil
 }
+
+// A sub-millisecond offset shifts the evaluation instants off the millisecond
+// grid. Tier A must still return what Tier B (Loki's engine) returns.
+func TestEngine_NanosecondOffsetEqualsTierB(t *testing.T) {
+	conn, _ := chtest.New(t)
+	w := &chstore.Writer{Conn: conn}
+	var l validation.Limits
+	l.RegisterFlags(flag.NewFlagSet("t", flag.PanicOnError))
+	overrides, err := validation.NewOverrides(l, nil)
+	require.NoError(t, err)
+	tierB := logql.NewEngine(logql.EngineOpts{}, &chstore.Querier{Conn: conn}, overrides, nopLogger{})
+	tierA := &TierA{Conn: conn, Limits: overrides}
+	engOn := &Engine{Mode: ModeOn, TierB: tierB, TierA: tierA, Limits: overrides, Logger: nopLogger{}}
+	engOff := &Engine{Mode: ModeOff, TierB: tierB, TierA: tierA, Limits: overrides, Logger: nopLogger{}}
+	start, _, err := seedPropData(t, w)
+	require.NoError(t, err)
+
+	q := `count_over_time({app=~".+"}[5m] offset 1ns)`
+	p, err := logql.NewLiteralParams(q, start.Add(10*time.Minute), start.Add(time.Hour), time.Minute, 0, logproto.FORWARD, 0, nil, nil)
+	require.NoError(t, err)
+	ctx := user.InjectOrgID(context.Background(), "t1")
+	want, err := engOff.Query(ctx, p).Exec(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, want.Data, "the fixture must produce series for this query")
+	before := TierALeaves.Load()
+	got, err := engOn.Query(ctx, p).Exec(ctx)
+	require.NoError(t, err)
+	require.Positive(t, TierALeaves.Load()-before, "the query must run on Tier A")
+	requireDataEqual(t, want.Data, got.Data, "q=%s", q)
+}
