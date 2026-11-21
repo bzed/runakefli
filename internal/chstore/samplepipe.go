@@ -8,7 +8,7 @@ import (
 	"github.com/cespare/xxhash/v2"
 	"github.com/grafana/loki/v3/pkg/logproto"
 	"github.com/grafana/loki/v3/pkg/logql/log"
-	"github.com/grafana/loki/v3/pkg/logqlmodel/stats"
+	"github.com/grafana/loki/v3/pkg/logql/model/stats"
 	"github.com/prometheus/prometheus/model/labels"
 )
 

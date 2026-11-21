@@ -1,6 +1,6 @@
 // Package api query limits.
 //
-// Copied from grafana/loki@39c256e5 pkg/querier/queryrange/limits.go
+// Copied from grafana/loki@acaa752c pkg/querier/queryrange/limits.go
 // (validateMaxEntriesLimits, validateMatchers, requiredLabelsErrTmpl,
 // requiredNumberLabelsErrTmpl, maxSeriesErrTmpl), pkg/querier/queryrange/
 // roundtrip.go (the matcher and entry-limit part of roundTripper.Do), the
@@ -23,8 +23,9 @@ import (
 
 	"github.com/grafana/dskit/httpgrpc"
 	"github.com/grafana/dskit/tenant"
+	logqlerrors "github.com/grafana/loki/v3/pkg/logql/errors"
+	logqlmodel "github.com/grafana/loki/v3/pkg/logql/model"
 	"github.com/grafana/loki/v3/pkg/logql/syntax"
-	"github.com/grafana/loki/v3/pkg/logqlmodel"
 	util_validation "github.com/grafana/loki/v3/pkg/util/validation"
 	"github.com/grafana/loki/v3/pkg/validation"
 	"github.com/prometheus/common/model"
@@ -92,7 +93,7 @@ func (a *API) checkQuery(ctx context.Context, expr syntax.Expr, start, end time.
 	length := util_validation.SmallestPositiveNonZeroDurationPerTenant(tenants, func(id string) time.Duration { return a.Limits.MaxQueryLength(ctx, id) })
 	if length > 0 {
 		if l := timestamp.Time(end.UnixMilli()).Sub(timestamp.Time(start.UnixMilli())); l > length {
-			return start, false, fmt.Errorf("%w: %w", logqlmodel.ErrMaxQueryLength,
+			return start, false, fmt.Errorf("%w: %w", logqlerrors.ErrMaxQueryLength,
 				httpgrpc.Errorf(http.StatusBadRequest, util_validation.ErrQueryTooLong, l, model.Duration(length)))
 		}
 	}
@@ -117,7 +118,7 @@ func emptyResult(expr syntax.Expr, instant bool) parser.Value {
 func validateMaxEntriesLimits(ctx context.Context, limits *validation.Overrides, tenants []string, reqLimit uint32) error {
 	maxEntriesLimit := util_validation.SmallestPositiveNonZeroIntPerTenant(tenants, func(id string) int { return limits.MaxEntriesLimitPerQuery(ctx, id) })
 	if int(reqLimit) > maxEntriesLimit && maxEntriesLimit != 0 {
-		return fmt.Errorf("%w: %w", logqlmodel.ErrMaxEntriesLimit,
+		return fmt.Errorf("%w: %w", logqlerrors.ErrMaxEntriesLimit,
 			httpgrpc.Errorf(http.StatusBadRequest, maxSeriesErrTmpl, reqLimit, maxEntriesLimit))
 	}
 	return nil

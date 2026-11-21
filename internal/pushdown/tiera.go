@@ -11,9 +11,10 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/grafana/dskit/tenant"
 	"github.com/grafana/loki/v3/pkg/logql"
+	logqlerrors "github.com/grafana/loki/v3/pkg/logql/errors"
 	"github.com/grafana/loki/v3/pkg/logql/log"
+	logqlmodel "github.com/grafana/loki/v3/pkg/logql/model"
 	"github.com/grafana/loki/v3/pkg/logql/syntax"
-	"github.com/grafana/loki/v3/pkg/logqlmodel"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 
@@ -230,7 +231,7 @@ func (a *TierA) execRange(ctx context.Context, e *syntax.RangeAggregationExpr, p
 
 	maxSeries := a.Limits.MaxQuerySeries(tenantID)
 	if len(seriesMap) > maxSeries {
-		return logqlmodel.Result{}, logqlmodel.NewSeriesLimitError(maxSeries)
+		return logqlmodel.Result{}, logqlerrors.NewSeriesLimitError(maxSeries)
 	}
 
 	// Build the result

@@ -7,9 +7,9 @@ import (
 	"github.com/grafana/loki/v3/pkg/loghttp"
 	"github.com/grafana/loki/v3/pkg/logproto"
 	"github.com/grafana/loki/v3/pkg/logql"
+	logqlerrors "github.com/grafana/loki/v3/pkg/logql/errors"
+	"github.com/grafana/loki/v3/pkg/logql/model/stats"
 	"github.com/grafana/loki/v3/pkg/logql/syntax"
-	"github.com/grafana/loki/v3/pkg/logqlmodel"
-	"github.com/grafana/loki/v3/pkg/logqlmodel/stats"
 	"github.com/grafana/loki/v3/pkg/util/httpreq"
 	"github.com/grafana/loki/v3/pkg/util/marshal"
 	serverutil "github.com/grafana/loki/v3/pkg/util/server"
@@ -67,7 +67,7 @@ func (a *API) instantQuery(w http.ResponseWriter, r *http.Request) {
 	// Match Loki's doInstantRequest guard: a log (non-sample) expression is not
 	// valid as an instant query.
 	if _, isSample := expr.(syntax.SampleExpr); !isSample {
-		serverutil.WriteError(logqlmodel.ErrUnsupportedSyntaxForInstantQuery, w)
+		serverutil.WriteError(logqlerrors.ErrUnsupportedSyntaxForInstantQuery, w)
 		return
 	}
 	if _, empty, err := a.checkQuery(r.Context(), expr, iq.Ts, iq.Ts, iq.Limit); err != nil {

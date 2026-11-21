@@ -100,3 +100,19 @@ func TestAPI_InstantQueryInvalidLogQuery(t *testing.T) {
 	// Loki returns 400 for log queries in instant query
 	require.Equal(t, http.StatusBadRequest, code)
 }
+
+// Loki parses the histogram functions but does not evaluate them yet and
+// refuses them while -querier.engine.enable-histograms is off (the default).
+func TestAPI_HistogramQueryIs400(t *testing.T) {
+	srv := newServer(t, true)
+	now := time.Now()
+	q := url.Values{
+		"query": {`histogram_quantile(0.99, sum by (path) (histogram_over_time({app="api"} | json | unwrap duration_seconds(duration) [5m])))`},
+		"start": {strconv.FormatInt(now.Add(-time.Hour).UnixNano(), 10)},
+		"end":   {strconv.FormatInt(now.UnixNano(), 10)},
+		"step":  {"60"},
+	}
+	code, body := do(t, http.MethodGet, srv.URL+"/loki/api/v1/query_range?"+q.Encode(), "t1", "")
+	require.Equal(t, http.StatusBadRequest, code, body)
+	require.Contains(t, body, "histogram functions are experimental and not enabled")
+}

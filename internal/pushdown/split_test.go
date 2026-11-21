@@ -12,7 +12,7 @@ import (
 	"github.com/grafana/dskit/user"
 	"github.com/grafana/loki/v3/pkg/logproto"
 	"github.com/grafana/loki/v3/pkg/logql"
-	"github.com/grafana/loki/v3/pkg/logqlmodel"
+	logqlerrors "github.com/grafana/loki/v3/pkg/logql/errors"
 	"github.com/grafana/loki/v3/pkg/util/constants"
 	"github.com/grafana/loki/v3/pkg/util/httpreq"
 	"github.com/grafana/loki/v3/pkg/validation"
@@ -142,12 +142,12 @@ func TestSplitter_SeriesLimit(t *testing.T) {
 	conn, base := splitFixtureConn(t)
 	s, raw := newSplitter(t, conn, semaphore.NewWeighted(16), func(l *validation.Limits) { l.MaxQuerySeries = 1 })
 	drill := httpreq.InjectQueryTags(tctx(), "source="+constants.LogsDrilldownAppName)
-	newErr := logqlmodel.NewSeriesLimitError(1).Error()
+	newErr := logqlerrors.NewSeriesLimitError(1).Error()
 
 	// Each leg sees one series (early ends at 2h, late starts at 4h); the merge sees two.
 	merge := rangeParams(t, `count_over_time({app=~"early|late"}[1m])`, base.Add(time.Hour), base.Add(5*time.Hour), time.Minute)
 	_, err := s.Query(merge).Exec(tctx())
-	var limitErr *logqlmodel.LimitError
+	var limitErr *logqlerrors.LimitError
 	require.ErrorAs(t, err, &limitErr)
 	require.Equal(t, newErr, err.Error())
 	want, err := raw.Query(merge).Exec(drill)

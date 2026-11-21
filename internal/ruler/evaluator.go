@@ -6,7 +6,7 @@ import (
 
 	"github.com/grafana/loki/v3/pkg/logproto"
 	"github.com/grafana/loki/v3/pkg/logql"
-	"github.com/grafana/loki/v3/pkg/logqlmodel"
+	logqlmodel "github.com/grafana/loki/v3/pkg/logql/model"
 )
 
 // Engine executes a LogQL query; *pushdown.Engine and api.NewPlainQuerier
@@ -23,7 +23,7 @@ type Evaluator struct {
 }
 
 // Copyright (c) 2015-2026 Grafana Labs.
-// Copied from grafana/loki@39c256e5 pkg/ruler/evaluator_local.go (LocalEvaluator.Eval);
+// Copied from grafana/loki@acaa752c pkg/ruler/evaluator_local.go (LocalEvaluator.Eval);
 // modifications: runs Engine instead of *logql.QueryEngine; the per-evaluation
 // info log line is dropped.
 
