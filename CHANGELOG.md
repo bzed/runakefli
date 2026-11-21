@@ -10,6 +10,10 @@ changelog (`debian/changelog`) carries the same releases.
 
 - CI: the `docs` workflow mirrors the site to S3 with `rclone` instead of `s3cmd`. Only files whose content changed are uploaded (the apt packages already in the bucket are skipped), uploads are single requests instead of multipart, and requests that the store answers with 503 are retried with a backoff for several minutes, so a Backblaze hiccup no longer fails the job.
 
+### Fixed
+
+- CI: the `docs` workflow's `s3` job failed on every run because rclone sends `X-Amz-Acl: private`, which Backblaze B2 (the bucket behind `runakefli.app`) rejects with `InvalidArgument: Unsupported value for canned acl 'private'`. Ubuntu 24.04 ships rclone 1.60.1, which cannot be told to omit that header, so the job now installs a pinned rclone (v1.76.0, SHA-256 verified) and sets `RCLONE_CONFIG_S3_ACL=` so no `X-Amz-Acl` header is sent.
+
 ## [1.0.0] - 2026-11-21
 
 First stable release: Rúnakefli is tested in production.
