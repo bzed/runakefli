@@ -18,4 +18,7 @@ description: What is deferred or still open in Rúnakefli, the Loki®-compatible
 - **SQL push-down for multi-tenant queries:** with
   `query.querier.multi_tenant_queries_enabled`, multi-tenant queries run on the
   plain engine, because push-down is single-tenant by construction.
+- **Strict `limits_config`:** unknown keys inside `limits_config` are ignored, where Loki rejects them (see the
+  [divergences](https://github.com/bzed/runakefli/blob/main/docs/divergences.md#ingestion)). Decode the block
+  strictly, so a typo or a key Loki removed is an error at startup.
 - **`detected_metric_names`:** not served by Rúnakefli.
