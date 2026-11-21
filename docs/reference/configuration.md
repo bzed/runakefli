@@ -226,7 +226,7 @@ Loki's `validation.Limits` block. Every key Loki accepts is accepted here,
 with Loki's defaults and Loki's validation. The full set is documented in the
 [Loki limits reference](https://grafana.com/docs/loki/latest/configure/#limits_config).
 Accepting a key does not mean it has an effect: Rúnakefli enforces the ones its own
-code reads, and ignores the rest, unknown keys included. See
+code reads and ignores the rest. See
 [Differences from Loki](https://github.com/bzed/runakefli/blob/main/docs/divergences.md#ingestion).
 
 **Limits apply to every tenant.** Rúnakefli has no per-tenant overrides
