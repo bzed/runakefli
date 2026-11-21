@@ -1,3 +1,15 @@
+runakefli (0.16.0) trixie; urgency=medium
+
+  * Pinned Loki commit bumped to acaa752c (2026-11-20); see CHANGELOG.md
+    for the inherited changes.
+  * Fixes: Tier A offsets that are not whole milliseconds, rejected
+    streams no longer written, discard counted once, internal labels
+    hidden from /labels and /detected_labels.
+  * Built with Go 1.27.4; the divergences list now covers unimplemented
+    Loki settings and endpoints.
+
+ -- Bernd Zeimetz <bernd@bzed.de>  Sat, 21 Nov 2026 11:54:09 +0100
+
 runakefli (0.15.0) trixie; urgency=medium
 
   * Renamed from lokihouse to runakefli (Rúnakefli), as a precaution to

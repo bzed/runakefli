@@ -6,6 +6,8 @@ changelog (`debian/changelog`) carries the same releases.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-21
+
 ### Changed
 
 - Built with Go 1.27.4 (security fixes).
