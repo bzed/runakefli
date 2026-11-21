@@ -40,12 +40,13 @@ One-time repository settings (maintainer, not the implementer):
 - The secret `APT_GPG_PRIVATE_KEY`, see below.
 - The secrets `S3_ENDPOINT` (host only), `S3_BUCKET`, `S3_ACCESS_KEY_ID` and
   `S3_SECRET_ACCESS_KEY`: `docs.yml` mirrors the site to that S3 bucket and
-  deletes stale objects. For now this happens on every push to `main`, later
-  only for releases. The bucket is Backblaze B2, which has no canned ACLs: the
-  job therefore installs a pinned rclone (v1.76.0) rather than Ubuntu's
-  1.60.1, and sets `RCLONE_CONFIG_S3_ACL=` so no `X-Amz-Acl` header is sent.
-  Do not drop either, or every upload fails with `InvalidArgument:
-  Unsupported value for canned acl 'private'`.
+  deletes stale objects. This happens on releases only (`if: inputs.release`);
+  a push to `main` publishes to GitHub Pages and leaves the bucket alone. The
+  bucket is Backblaze B2, which has no canned ACLs: the job therefore installs
+  a pinned rclone (v1.76.0) rather than Ubuntu's 1.60.1, and sets
+  `RCLONE_CONFIG_S3_ACL=` so no `X-Amz-Acl` header is sent. Do not drop either,
+  or every upload fails with `InvalidArgument: Unsupported value for canned
+  acl 'private'`.
 - The optional secret `GOOGLE_SITE_VERIFICATION`, the file name Google Search
   Console gives (`google<hex>.html`). `docs.yml` writes that file to the site
   root; it is not in the repository.

@@ -9,6 +9,7 @@ changelog (`debian/changelog`) carries the same releases.
 ### Changed
 
 - CI: the `docs` workflow mirrors the site to S3 with `rclone` instead of `s3cmd`. Only files whose content changed are uploaded (the apt packages already in the bucket are skipped), uploads are single requests instead of multipart, and requests that the store answers with 503 are retried with a backoff for several minutes, so a Backblaze hiccup no longer fails the job.
+- CI: the `docs` workflow copies the site to S3 on releases only. A push to `main` still publishes to GitHub Pages, but no longer uploads to the bucket or deletes stale objects there.
 
 ### Fixed
 

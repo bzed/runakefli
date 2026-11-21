@@ -166,11 +166,13 @@ jobs:
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
 
   # Mirror the site (exactly what deploy publishes) to S3 and delete what is no
-  # longer part of it. For now every run does this; later only releases:
-  # `if: ${{ inputs.release }}` instead of the condition below.
+  # longer part of it. Releases only: a push to main publishes to GitHub Pages
+  # but does not touch the bucket. The deploy check stays because a condition
+  # on the job makes GitHub skip the implicit "needs succeeded" rule.
   s3:
     needs: deploy
-    if: ${{ !cancelled() && needs.deploy.result == 'success' }}
+    if: ${{ !cancelled() && needs.deploy.result == 'success' && inputs.release }}
+
     runs-on: ubuntu-24.04
     # rclone retries for minutes when the store answers 503; do not hang for hours
     timeout-minutes: 30
