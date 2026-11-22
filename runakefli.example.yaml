@@ -42,6 +42,15 @@ clickhouse:
   # read_timeout: 5m              # longest wait for a packet from ClickHouse
   # max_open_conns: 100           # each in-flight push holds a connection until its insert is flushed
   # max_idle_conns: 20            # at most max_open_conns
+  # Native protocol over TLS (e.g. port 9440). Enabled alone uses the system
+  # root CAs and verifies each addr's own host name.
+  # tls:
+  #   enabled: true
+  #   ca_file: ""                 # PEM CA bundle instead of the system roots
+  #   cert_file: ""               # client certificate for mutual TLS, with key_file
+  #   key_file: ""
+  #   server_name: ""             # verified name for all addrs; leave empty with a cluster
+  #   insecure_skip_verify: false # development only
   # Cluster: tables become Replicated*MergeTree <table>_local, created ON CLUSTER,
   # plus Distributed tables. Leave cluster empty for a single server.
   # cluster: ""                   # a remote_servers cluster name

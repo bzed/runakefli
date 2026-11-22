@@ -76,6 +76,13 @@ Connection and topology settings for the ClickHouse® storage.
 | `clickhouse.read_timeout` | duration | `5m` | Longest wait for a packet from ClickHouse during a query or insert. |
 | `clickhouse.max_open_conns` | int | `100` | Connection pool size. Each in-flight push holds a connection until its async insert is flushed; pushes, queries, tails and delete processing share the pool. |
 | `clickhouse.max_idle_conns` | int | `20` | Idle connections kept open (≤ `max_open_conns`). |
+| `clickhouse.tls` | block | disabled | Native protocol over TLS; see [TLS](#tls) below. |
+| `clickhouse.tls.enabled` | bool | `false` | Connect over TLS (e.g. port 9440 on servers that enforce native TLS, or ClickHouse Cloud). Enabled alone uses the system root CAs and verifies each address's own host name. |
+| `clickhouse.tls.ca_file` | string | `""` | PEM CA bundle used instead of the system roots. Read at startup; an unreadable file or one without a PEM certificate is a startup error. |
+| `clickhouse.tls.cert_file` | string | `""` | Client certificate for mutual TLS, set together with `clickhouse.tls.key_file`. Read at startup; an error is a startup error. |
+| `clickhouse.tls.key_file` | string | `""` | Client private key for mutual TLS, set together with `clickhouse.tls.cert_file`. Read at startup; an error is a startup error. |
+| `clickhouse.tls.server_name` | string | `""` | Overrides the verified name for **all** addresses. Leave empty with a cluster so each address is verified against its own host name. |
+| `clickhouse.tls.insecure_skip_verify` | bool | `false` | Skip certificate verification. Development only. |
 
 ### Password handling
 
@@ -88,17 +95,29 @@ For production, prefer `clickhouse.password_file` (or systemd credentials) over 
 plain `clickhouse.password:` in the config file, so the secret is not in a world-readable
 file.
 
-These protect the secret *at rest* only. The connection to ClickHouse is plain
-TCP — there is no TLS option yet — so the password and all log data cross the
-network unencrypted once the connection leaves loopback (see the
-[divergences](https://runakefli.app/divergences/#storage-transport)); wiring
-TLS is on the [roadmap](https://runakefli.app/roadmap/).
+These protect the secret *at rest* only. Without `clickhouse.tls.enabled` the
+connection to ClickHouse is plain TCP, so the password and all log data cross
+the network unencrypted once the connection leaves loopback (see the
+[divergences](https://runakefli.app/divergences/#storage-transport)); see
+[TLS](#tls) below.
 
 The container image's built-in config maps `RUNAKEFLI_CLICKHOUSE_PASSWORD` to
 `clickhouse.password` and `RUNAKEFLI_CLICKHOUSE_PASSWORD_FILE` to
 `clickhouse.password_file`; see
 [Container image](../install/index.md#container-image). Outside the image,
 use `${VAR}` in your config together with `-config.expand-env`.
+
+### TLS
+
+With the default configuration (`clickhouse.tls.enabled: false`) the password
+and every log line cross the network in cleartext, so keep `clickhouse.addr` on
+loopback or enable TLS. `clickhouse.tls.enabled: true` wraps the native
+connection in TLS; the material named by `ca_file`, `cert_file` and `key_file`
+is read and validated at startup, like `clickhouse.password_file`, and a bad
+or missing file stops Rúnakefli from starting. Leaving `server_name` empty with
+several addresses verifies each address against its own host name. The
+remaining caveat and the startup warning for non-loopback addresses are on the
+[divergences](https://runakefli.app/divergences/#storage-transport) page.
 
 ### ClickHouse user and grants
 
