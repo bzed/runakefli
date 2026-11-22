@@ -113,6 +113,7 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 	loops.Go(func() {
 		(&deletes.Processor{
 			Store: store, Conn: conn, DB: cfg.ClickHouse.Database, Topo: cfg.Topology(),
+			Limits:       limits,
 			CancelPeriod: cfg.Compactor.DeleteRequestCancelPeriod,
 			Interval:     cfg.Compactor.CompactionInterval,
 			Logger:       logger,

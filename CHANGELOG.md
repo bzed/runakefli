@@ -9,6 +9,7 @@ changelog (`debian/changelog`) carries the same releases.
 ### Fixed
 
 - `POST /otlp/v1/logs` no longer aborts the connection on every request with log records; OTLP ingest works (#41).
+- `deletion_mode: filter-only` no longer physically deletes rows; only `filter-and-delete` tenants' requests are applied by the processor (#38).
 
 ## [1.1.0] - 2026-11-22
 

@@ -9,6 +9,7 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/grafana/loki/v3/pkg/compactor/deletion/deletionproto"
+	"github.com/grafana/loki/v3/pkg/compactor/deletionmode"
 	"github.com/grafana/loki/v3/pkg/logproto"
 	"github.com/grafana/loki/v3/pkg/logql"
 	logq "github.com/grafana/loki/v3/pkg/logql/log"
@@ -22,12 +23,17 @@ import (
 // Processor physically deletes delete requests that are past their cancel
 // period. Query-time filtering already hides the matching lines; the processor
 // makes the deletion permanent and marks the request processed (which also
-// stops query-time filtering for it).
+// stops query-time filtering for it). Only requests of tenants whose
+// limits_config.deletion_mode is filter-and-delete are applied; for
+// filter-only the request stays pending, so the lines remain hidden at query
+// time and on disk.
 type Processor struct {
-	Store        *Store
-	Conn         driver.Conn
-	DB           string
-	Topo         chstore.Topology
+	Store *Store
+	Conn  driver.Conn
+	DB    string
+	Topo  chstore.Topology
+	// Limits is required; it decides whether a request is applied physically.
+	Limits       deletionLimits
 	CancelPeriod time.Duration
 	Interval     time.Duration
 	Logger       log.Logger
@@ -39,13 +45,17 @@ type Processor struct {
 	maskPending bool
 }
 
-// ProcessDue physically deletes every received request older than CancelPeriod,
-// then marks it processed. lightweight_deletes_sync=2 makes the rows invisible
-// on every replica before the call returns. Requests are fault-isolated: a
-// failing request is logged, retried on the next pass (the rows are still
-// hidden by query-time filtering) and does not stop the others. After a pass
-// that deleted rows it runs APPLY DELETED MASK so the rows leave the disk too;
-// a failed mask step is retried on the next pass.
+// ProcessDue physically deletes every received request older than CancelPeriod
+// whose tenant's deletion_mode is filter-and-delete, then marks it processed.
+// Requests of filter-only (and disabled) tenants are skipped and stay received:
+// query-time filtering keeps hiding their lines, on disk they stay. A request
+// whose mode cannot be parsed is logged and surfaced as the pass error.
+// lightweight_deletes_sync=2 makes the rows invisible on every replica before
+// the call returns. Requests are fault-isolated: a failing request is logged,
+// retried on the next pass (the rows are still hidden by query-time filtering)
+// and does not stop the others. After a pass that deleted rows it runs
+// APPLY DELETED MASK so the rows leave the disk too; a failed mask step is
+// retried on the next pass.
 func (p *Processor) ProcessDue(ctx context.Context, now time.Time) error {
 	reqs, err := p.Store.Unprocessed(ctx)
 	if err != nil {
@@ -54,6 +64,16 @@ func (p *Processor) ProcessDue(ctx context.Context, now time.Time) error {
 	var first error
 	for _, r := range reqs {
 		if r.CreatedAt.Time().Add(p.CancelPeriod).After(now) {
+			continue
+		}
+		ok, err := p.shouldProcessRequest(r)
+		if err != nil {
+			if first == nil {
+				first = fmt.Errorf("delete request %s: %w", r.RequestID, err)
+			}
+			continue
+		}
+		if !ok {
 			continue
 		}
 		if err := p.process(ctx, r); err != nil {
@@ -88,6 +108,22 @@ func (p *Processor) ProcessDue(ctx context.Context, now time.Time) error {
 		}
 	}
 	return first
+}
+
+// Copied from grafana/loki@acaa752c17c1560eead5a33d04d63ed877d4a6de pkg/compactor/deletion/delete_requests_manager.go; modifications:
+//   - it is a Processor method and uses the Processor's Limits and Logger
+//     instead of the DeleteRequestsManager's and util_log;
+//   - the mode lookup is runakefli's deleteModeFromLimits (handler.go).
+func (p *Processor) shouldProcessRequest(r deletionproto.DeleteRequest) (bool, error) {
+	mode, err := deleteModeFromLimits(p.Limits, r.UserID)
+	if err != nil {
+		if p.Logger != nil {
+			level.Error(p.Logger).Log("msg", "unable to determine deletion mode for user", "user", r.UserID) //nolint:gosec // G104: go-kit logger errors are not actionable
+		}
+		return false, err
+	}
+
+	return mode == deletionmode.FilterAndDelete, nil
 }
 
 // process physically removes the rows a single delete request hides. A bare
