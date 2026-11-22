@@ -1,3 +1,18 @@
+runakefli (1.2.0) trixie; urgency=medium
+
+  * OTLP ingest (/otlp/v1/logs) no longer aborts every request with log
+    records.
+  * deletion_mode filter-only no longer physically deletes rows.
+  * Pushes are bounded: new distributor.max_inflight_bytes refuses
+    pushes with 503 while too many bytes are in flight; the decompressed
+    body is capped by limits_config.max_push_size.
+  * max_concurrent_tail_requests is enforced per tenant.
+  * With auth_enabled: false, X-Scope-OrgID is ignored and every request
+    uses tenant fake, as in Loki; setups relying on the header must set
+    auth_enabled: true.
+
+ -- Bernd Zeimetz <bernd@bzed.de>  Sun, 22 Nov 2026 16:16:44 +0100
+
 runakefli (1.1.0) trixie; urgency=medium
 
   * New clickhouse.tls block (enabled, ca_file, cert_file, key_file,
