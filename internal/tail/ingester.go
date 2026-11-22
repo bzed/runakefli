@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/grafana/dskit/tenant"
 	"github.com/grafana/loki/v3/pkg/logproto"
 	"github.com/grafana/loki/v3/pkg/logql"
 	"github.com/grafana/loki/v3/pkg/logql/syntax"
@@ -22,18 +23,24 @@ const addr = "clickhouse"
 
 // Ingester implements tail.Ingester with a single in-process "ingester". Its
 // tail client polls ClickHouse for rows newer than the previous poll (minus a
-// lookback for late arrivals) and deduplicates them.
+// lookback for late arrivals) and deduplicates them. Active tails are counted
+// per tenant, like Loki's ingester counts open tailers per instance and
+// tenant.
 type Ingester struct {
 	Q        *chstore.Querier
 	Poll     time.Duration // default 1s
 	Lookback time.Duration // default 10s
 
 	mu     sync.Mutex
-	active int
+	active map[string]int // tenant -> open tails; entries are dropped at zero
 }
 
 // Tail starts a tail query and returns a map of address to tail client.
 func (i *Ingester) Tail(ctx context.Context, req *logproto.TailRequest) (map[string]logproto.Querier_TailClient, error) {
+	tenantID, err := tenant.TenantID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	poll, look := i.Poll, i.Lookback
 	if poll == 0 {
 		poll = time.Second
@@ -58,18 +65,26 @@ func (i *Ingester) Tail(ctx context.Context, req *logproto.TailRequest) (map[str
 		plan:   &plan.QueryPlan{AST: sel},
 		seen:   map[seenKey]int64{},
 	}
-	i.addActive(1)
+	i.addActive(tenantID, 1)
 	go func() {
 		<-ctx.Done()
-		i.addActive(-1)
+		i.addActive(tenantID, -1)
 	}()
 	return map[string]logproto.Querier_TailClient{addr: c}, nil
 }
 
-func (i *Ingester) addActive(n int) {
+// addActive adjusts tenantID's open-tail count and drops the entry once it
+// reaches zero, so finished tenants leave no state behind.
+func (i *Ingester) addActive(tenantID string, n int) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	i.active += n
+	if i.active == nil {
+		i.active = map[string]int{}
+	}
+	i.active[tenantID] += n
+	if i.active[tenantID] <= 0 {
+		delete(i.active, tenantID)
+	}
 }
 
 // TailDisconnectedIngesters handles tail requests for disconnected ingesters.
@@ -80,12 +95,17 @@ func (i *Ingester) TailDisconnectedIngesters(ctx context.Context, req *logproto.
 	return i.Tail(ctx, req)
 }
 
-// TailersCount returns the number of active tailers.
-func (i *Ingester) TailersCount(context.Context) ([]uint32, error) {
+// TailersCount returns the number of active tailers of the calling tenant.
+func (i *Ingester) TailersCount(ctx context.Context) ([]uint32, error) {
+	tenantID, err := tenant.TenantID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	// active is always >= 0 (incremented/decremented by 1 from 0) and within uint32 range
-	active := i.active
+	// active counts are always >= 0 (incremented/decremented by 1 from 0) and
+	// within uint32 range
+	active := i.active[tenantID]
 	if active < 0 {
 		active = 0
 	}
