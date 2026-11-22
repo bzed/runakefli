@@ -6,16 +6,21 @@ changelog (`debian/changelog`) carries the same releases.
 
 ## [Unreleased]
 
+### Added
+
+- `clickhouse.tls` (`enabled`, `ca_file`, `cert_file`, `key_file`, `server_name`, `insecure_skip_verify`): the native ClickHouse connection can now use TLS (e.g. native-TLS servers and ClickHouse Cloud's port 9440), with the material read and validated at startup like `password_file`. Rúnakefli also warns at startup when TLS is off and `clickhouse.addr` names a non-loopback address. Until now the transport was cleartext-only (#45).
+
 ### Changed
 
-- The `multi_tenant_queries_enabled` documentation now matches the server: the per-tenant fan-out covers the query endpoints, `series`, label names/values and `detected_fields`, but not `index/stats`, `index/volume`, `index/volume_range`, `detected_labels` and `patterns` — those were never wired to it, so with either flag value they reject a multi-tenant `X-Scope-OrgID` with `multiple org IDs present` (500) (#42).
-- New divergence recorded: the ClickHouse connection is cleartext-only — there is no `clickhouse.tls` key, the password crosses the network in the first handshake packet, and TLS-only endpoints (ClickHouse Cloud's native port 9440) cannot be reached at all; TLS wiring stays on the roadmap (#45).
+- The apt repository is signed with a new Ed25519 key, `runakefli archive signing key <bernd@bzed.de>` (fingerprint `6560 068E B9BB AB40 9577  ABDD 5862 6C8A 9047 C0E9`), replacing the `lokihouse` key of the first release; its private part lives as an environment secret of the `apt-signing` GitHub environment and in the maintainer's password store only (#44). Users must re-install the keyring per the [install instructions](https://runakefli.app/install/), or `apt` reports an unknown signature.
 - New divergences recorded from validating the tail delete path (#46): live tail polls hide lines covered by pending deletes, where Loki's live tail streams them unfiltered (Rúnakefli is stricter), and a failed delete-requests fetch fails the query or tail instead of Loki's serve-unfiltered.
 - CI: the `docs` workflow mirrors the site to S3 with `rclone` instead of `s3cmd`. Only files whose content changed are uploaded (the apt packages already in the bucket are skipped), uploads are single requests instead of multipart, and requests that the store answers with 503 are retried with a backoff for several minutes, so a Backblaze hiccup no longer fails the job.
 - CI: the `docs` workflow copies the site to S3 on releases only. A push to `main` still publishes to GitHub Pages, but no longer uploads to the bucket or deletes stale objects there.
+- CI: the `docs.yml` `build` and `apt` jobs check out `main` instead of whatever commit a `v*` tag points at (a release therefore publishes the docs of `main`), and the `apt` job (which imports the archive signing key) runs under the new `apt-signing` environment, which can hold the signing key as an environment secret and gate it with deployment rules and reviewers; `APT_GPG_PRIVATE_KEY` is no longer a required `workflow_call` secret (#44).
 
 ### Fixed
 
+- The index and drilldown endpoints (`index/stats`, `index/volume`, `index/volume_range`, `detected_labels`, `patterns`) now fan out per tenant with `query.querier.multi_tenant_queries_enabled: true`, as documented since 0.7.0. The server wiring was missing, so they answered `multiple org IDs present` (500) even with the flag on (#42).
 - CI: the `docs` workflow's `s3` job failed on every run because rclone sends `X-Amz-Acl: private`, which Backblaze B2 (the bucket behind `runakefli.app`) rejects with `InvalidArgument: Unsupported value for canned acl 'private'`. Ubuntu 24.04 ships rclone 1.60.1, which cannot be told to omit that header, so the job now installs a pinned rclone (v1.76.0, SHA-256 verified) and sets `RCLONE_CONFIG_S3_ACL=` so no `X-Amz-Acl` header is sent.
 
 ## [1.0.0] - 2026-11-21

@@ -4,6 +4,8 @@ package chtest
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -31,8 +33,11 @@ func Topology() chstore.Topology {
 }
 
 // Options returns connection options for the test server with the given default database.
+// RUNAKEFLI_TEST_CH_TLS (unset/empty/0 = off, any other value = TLS with the
+// system roots) and RUNAKEFLI_TEST_CH_TLS_CA (PEM CA file, replaces the system
+// roots) select a TLS server, e.g. ClickHouse Cloud's native port 9440.
 func Options(db string) *clickhouse.Options {
-	return &clickhouse.Options{
+	o := &clickhouse.Options{
 		Addr: []string{env("RUNAKEFLI_TEST_CH_ADDR", "localhost:9000")},
 		Auth: clickhouse.Auth{
 			Database: db,
@@ -41,6 +46,22 @@ func Options(db string) *clickhouse.Options {
 		},
 		Settings: Topology().Settings(),
 	}
+	if tlsEnv := os.Getenv("RUNAKEFLI_TEST_CH_TLS"); tlsEnv != "" && tlsEnv != "0" {
+		tlsCfg := &tls.Config{}
+		if ca := os.Getenv("RUNAKEFLI_TEST_CH_TLS_CA"); ca != "" {
+			b, err := os.ReadFile(ca) //nolint:gosec // G304: path from the test operator's environment
+			if err != nil {
+				panic(fmt.Sprintf("RUNAKEFLI_TEST_CH_TLS_CA %s: %v", ca, err)) // test helper: programmer error at test start
+			}
+			pool := x509.NewCertPool()
+			if !pool.AppendCertsFromPEM(b) {
+				panic(fmt.Sprintf("RUNAKEFLI_TEST_CH_TLS_CA %s: no PEM certificate", ca))
+			}
+			tlsCfg.RootCAs = pool
+		}
+		o.TLS = tlsCfg
+	}
+	return o
 }
 
 // New creates and migrates a fresh database, dropped (on every node) when the test ends.

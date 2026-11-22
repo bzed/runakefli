@@ -37,7 +37,7 @@ One-time repository settings (maintainer, not the implementer):
 
 - Settings → Pages → Source "GitHub Actions"; the `github-pages` environment
   must allow deployments from `main` and from `v*` tags.
-- The secret `APT_GPG_PRIVATE_KEY`, see below.
+- The secret `APT_GPG_PRIVATE_KEY` (an environment secret of `apt-signing`, see below).
 - The secrets `S3_ENDPOINT` (host only), `S3_BUCKET`, `S3_ACCESS_KEY_ID` and
   `S3_SECRET_ACCESS_KEY`: `docs.yml` mirrors the site to that S3 bucket and
   deletes stale objects. This happens on releases only (`if: inputs.release`);
@@ -52,6 +52,12 @@ One-time repository settings (maintainer, not the implementer):
   root; it is not in the repository.
 - Branch protection requiring `checks`, `test`, `build`, `docs`, `deb` and the
   `docker` image job.
+- Settings → Environments → `apt-signing` (referenced by `docs.yml`'s `apt`
+  job): hold `APT_GPG_PRIVATE_KEY` here as an environment secret and delete
+  the repository-level secret of that name; deployment branches and tags:
+  `main` and `v*` (push-to-`main` runs sign the snapshot suite too);
+  optionally required reviewers, for a human approval gate before the
+  archive signing key is imported.
 
 ## The apt repository and its key
 
@@ -79,18 +85,18 @@ gpg --list-keys --with-fingerprint   # update the fingerprint in docs/install/in
 
 Users must fetch the new public key, so rotate rarely.
 
-**Whoever can push a `v*` tag can run scripts with the signing key.** In a
-release run of `docs.yml` (a `v*` tag push), the `build` and `apt` jobs check
-out the tagged commit — neither checkout pins a `ref:` — and the `apt` job
-imports `APT_GPG_PRIVATE_KEY` *before* running `scripts/build-apt-repo.sh`
-and `scripts/fetch-published-debs.sh` (and the build job's `pip install`)
-from that checkout. No environment gate protects the `apt` job (the `deploy`
-job's `github-pages` environment allows `v*` tags by design), and nothing
-hash-pins the scripts. A `v*` tag pointing at anything but reviewed `main`
-therefore hands the archive signing key — and the S3 credentials — to
-possibly stale or unreviewed scripts (#44). Restrict `v*` tag pushes
-accordingly (Settings → Tags → tag protection rules) and only ever tag a
-commit that `main` has already passed.
+**Tag protection is key protection.** In a release run (`v*` tag push) the
+`build` and `apt` jobs of `docs.yml` check out `main`, not the tagged commit,
+and the `apt` job runs under the `apt-signing` environment. This only helps
+for tags on commits that contain it: the workflow files themselves
+(`release.yml`, `docs.yml`, `deb.yml`) are always read from the tagged
+commit, so a tag on an older commit, or on one whose `docs.yml` drops the
+pin, runs that commit's scripts. Keep `APT_GPG_PRIVATE_KEY` as an
+environment secret of `apt-signing` (not a repository secret), restrict that
+environment's deployments to `main` and `v*` tags, restrict `v*` tag pushes
+(Settings → Rules → Rulesets, or tag protection rules), and only ever tag a
+commit that `main` has already passed (#44). For a human approval gate
+before the key is imported, give `apt-signing` required reviewers.
 
 ## Container image
 

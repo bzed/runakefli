@@ -5,6 +5,8 @@ package config
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
@@ -55,6 +57,14 @@ type Config struct {
 		ReadTimeout  time.Duration  `yaml:"read_timeout"`   // longest wait for a server packet; default 5m
 		MaxOpenConns int            `yaml:"max_open_conns"` // connection pool size; default 100
 		MaxIdleConns int            `yaml:"max_idle_conns"` // idle connections kept; default 20
+		TLS          struct {
+			Enabled            bool   `yaml:"enabled"`
+			CAFile             string `yaml:"ca_file"`
+			CertFile           string `yaml:"cert_file"`
+			KeyFile            string `yaml:"key_file"`
+			ServerName         string `yaml:"server_name"`
+			InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+		} `yaml:"tls"`
 	} `yaml:"clickhouse"`
 	Query struct {
 		Pushdown string `yaml:"pushdown"` // on | off | downstream; default on
@@ -72,6 +82,8 @@ type Config struct {
 	Ruler        lokiruler.Config  `yaml:"ruler"`         // Loki's ruler block, Loki's keys and defaults
 	RulerStorage rulestore.Config  `yaml:"ruler_storage"` // the ruler runs only when this is set
 	LimitsConfig validation.Limits `yaml:"limits_config"`
+
+	chTLS *tls.Config // loaded at Load; set only when ClickHouse.TLS.Enabled
 }
 
 // PushdownModes are the valid values for query.pushdown.
@@ -132,6 +144,9 @@ func Load(path string, expandEnv bool) (*Config, error) {
 		return nil, err
 	}
 	if err := c.validateClickHouseClient(); err != nil {
+		return nil, err
+	}
+	if err := c.loadTLS(); err != nil {
 		return nil, err
 	}
 	if c.Server.LogFormat != "logfmt" && c.Server.LogFormat != "json" {
@@ -205,13 +220,46 @@ func (c *Config) validateClickHouseClient() error {
 	case ch.MaxIdleConns <= 0 || ch.MaxIdleConns > ch.MaxOpenConns:
 		return errors.New("clickhouse: max_idle_conns must be between 1 and max_open_conns")
 	}
+	if (ch.TLS.CertFile != "") != (ch.TLS.KeyFile != "") {
+		return errors.New("clickhouse: tls: cert_file and key_file must be set together")
+	}
+	return nil
+}
+
+// loadTLS reads and validates the clickhouse.tls material, like loadPasswordFile.
+func (c *Config) loadTLS() error {
+	if !c.ClickHouse.TLS.Enabled {
+		return nil
+	}
+	c.chTLS = &tls.Config{
+		ServerName:         c.ClickHouse.TLS.ServerName,
+		InsecureSkipVerify: c.ClickHouse.TLS.InsecureSkipVerify, //nolint:gosec // G402: the operator explicitly opted into skipping verification
+	}
+	if ca := c.ClickHouse.TLS.CAFile; ca != "" {
+		b, err := os.ReadFile(ca) //nolint:gosec // G304: path from the operator's config
+		if err != nil {
+			return fmt.Errorf("clickhouse: tls: read ca_file %s: %w", ca, err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(b) {
+			return fmt.Errorf("clickhouse: tls: ca_file %s contains no PEM certificate", ca)
+		}
+		c.chTLS.RootCAs = pool
+	}
+	if cert, key := c.ClickHouse.TLS.CertFile, c.ClickHouse.TLS.KeyFile; cert != "" {
+		pair, err := tls.LoadX509KeyPair(cert, key)
+		if err != nil {
+			return fmt.Errorf("clickhouse: tls: load key_file %s (cert_file %s): %w", key, cert, err)
+		}
+		c.chTLS.Certificates = []tls.Certificate{pair}
+	}
 	return nil
 }
 
 // CHOptions returns the clickhouse-go options for a connection to db.
 func (c *Config) CHOptions(db string) *clickhouse.Options {
 	ch := c.ClickHouse
-	return &clickhouse.Options{
+	o := &clickhouse.Options{
 		Addr:         ch.Addr,
 		Auth:         clickhouse.Auth{Database: db, Username: ch.Username, Password: ch.Password},
 		Settings:     c.CHSettings(),
@@ -220,4 +268,8 @@ func (c *Config) CHOptions(db string) *clickhouse.Options {
 		MaxOpenConns: ch.MaxOpenConns,
 		MaxIdleConns: ch.MaxIdleConns,
 	}
+	if c.ClickHouse.TLS.Enabled {
+		o.TLS = c.chTLS
+	}
+	return o
 }

@@ -26,9 +26,10 @@ import (
 	"github.com/bzed/runakefli/internal/patterns"
 )
 
-// newMTServer builds the API the way server.newAPI will after Task 10 wiring:
-// when mt is true, log/metric queries fan out per tenant through
-// multitenant.Querier and label/series use the same multi-tenant querier.
+// newMTServer builds the API the way production server.newAPI does: when mt
+// is true, log/metric queries fan out per tenant through multitenant.Querier
+// and label/series use the same multi-tenant querier. It mirrors newAPI's
+// wiring, only with a test config.
 func newMTServer(t *testing.T, mt bool) *httptest.Server {
 	t.Helper()
 	return buildMTServer(t, mt, nil)
@@ -210,7 +211,7 @@ func TestMultiTenant_IndexDisabledRejects(t *testing.T) {
 	srv := newMTServer(t, false)
 	now := time.Now()
 	code, body := indexGet(t, srv.URL, "/loki/api/v1/index/stats", "t1|t2", `{app="a"}`, now)
-	require.NotEqual(t, http.StatusOK, code)
+	require.Equal(t, http.StatusInternalServerError, code, body)
 	require.Contains(t, body, "multiple org IDs present")
 }
 

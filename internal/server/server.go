@@ -68,6 +68,7 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 	if logger == nil {
 		logger = log.NewNopLogger()
 	}
+	warnCleartextTransport(logger, cfg)
 	conn, err := openClickHouse(ctx, cfg)
 	if err != nil {
 		return err
@@ -266,6 +267,7 @@ func newAPI(cfg *config.Config, conn driver.Conn, store *deletes.Store, dels del
 		Patterns:    &patterns.Querier{Q: q, Limits: limits, Logger: logger},
 		Deletes:     &deletes.Handler{Store: store, Limits: limits, MaxInterval: cfg.Compactor.DeleteMaxInterval, CancelPeriod: cfg.Compactor.DeleteRequestCancelPeriod},
 		AuthEnabled: cfg.AuthEnabled,
+		MultiTenant: cfg.Query.Querier.MultiTenantQueriesEnabled,
 	}
 	// tail.MaxDuration is Loki's -querier.tail-max-duration default (1h).
 	tq := tail.NewQuerier(&lhtail.Ingester{Q: q}, q, dels, limits, time.Hour, tail.NewMetrics(nil), logger)

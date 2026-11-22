@@ -1,6 +1,14 @@
 package config
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
@@ -324,4 +332,93 @@ func TestLoad_ClickHouseClientInvalid(t *testing.T) {
 		_, err := Load(p, false)
 		require.Error(t, err, body)
 	}
+}
+
+// writeTLSCerts writes a self-signed certificate/key pair (valid for
+// tls.LoadX509KeyPair) and a CA bundle (the same certificate) into dir.
+func writeTLSCerts(t *testing.T, dir string) (certPath, keyPath, caPath string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "runakefli-test"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	certPath, keyPath, caPath = filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem"), filepath.Join(dir, "ca.pem")
+	require.NoError(t, os.WriteFile(certPath, certPEM, 0o600))
+	require.NoError(t, os.WriteFile(caPath, certPEM, 0o600))
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600))
+	return certPath, keyPath, caPath
+}
+
+// loadCH loads a config from YAML (the package's other tests write a
+// t.TempDir() file and call Load the same way).
+func loadCH(t *testing.T, ch string) (*Config, error) {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "runakefli.yaml")
+	require.NoError(t, os.WriteFile(p, []byte("server:\n  http_listen_port: 0\n"+ch), 0o600))
+	return Load(p, false)
+}
+
+func TestClickHouseTLSDisabled(t *testing.T) {
+	c, err := loadCH(t, "clickhouse:\n  addr: [localhost:9000]\n")
+	require.NoError(t, err)
+	require.Nil(t, c.CHOptions("db").TLS) // default: cleartext, exactly today
+}
+
+func TestClickHouseTLSEnabledBare(t *testing.T) {
+	c, err := loadCH(t, "clickhouse:\n  addr: [localhost:9000]\n  tls:\n    enabled: true\n")
+	require.NoError(t, err)
+	require.NotNil(t, c.CHOptions("db").TLS)
+	require.Empty(t, c.CHOptions("db").TLS.ServerName)
+	require.False(t, c.CHOptions("db").TLS.InsecureSkipVerify)
+	require.Nil(t, c.CHOptions("db").TLS.RootCAs) // system roots
+}
+
+func TestClickHouseTLSFull(t *testing.T) {
+	dir := t.TempDir()
+	certPath, keyPath, caPath := writeTLSCerts(t, dir)
+	y := fmt.Sprintf("clickhouse:\n  addr: [localhost:9000]\n  tls:\n    enabled: true\n    ca_file: %q\n    cert_file: %q\n    key_file: %q\n    server_name: ch.internal\n    insecure_skip_verify: true\n", caPath, certPath, keyPath)
+	c, err := loadCH(t, y)
+	require.NoError(t, err)
+	tc := c.CHOptions("db").TLS
+	require.NotNil(t, tc)
+	require.Equal(t, "ch.internal", tc.ServerName)
+	require.True(t, tc.InsecureSkipVerify)
+	require.NotNil(t, tc.RootCAs)
+	require.Len(t, tc.Certificates, 1) // the loaded client keypair for mTLS
+}
+
+func TestClickHouseTLSErrors(t *testing.T) {
+	certPath, _, _ := writeTLSCerts(t, t.TempDir()) // keyPath unused here: Go rejects an unused variable
+
+	// cert_file and key_file must be set together — even when TLS is disabled.
+	_, err := loadCH(t, fmt.Sprintf("clickhouse:\n  tls:\n    cert_file: %q\n", certPath))
+	require.ErrorContains(t, err, "cert_file and key_file must be set together")
+
+	// Unreadable CA file fails at Load, like password_file.
+	_, err = loadCH(t, "clickhouse:\n  tls:\n    enabled: true\n    ca_file: /no/such/ca.pem\n")
+	require.ErrorContains(t, err, "ca_file /no/such/ca.pem")
+
+	// A CA file without PEM certificates fails at Load.
+	garbage := filepath.Join(t.TempDir(), "garbage.pem")
+	require.NoError(t, os.WriteFile(garbage, []byte("not a certificate\n"), 0o600))
+	_, err = loadCH(t, fmt.Sprintf("clickhouse:\n  tls:\n    enabled: true\n    ca_file: %q\n", garbage))
+	require.ErrorContains(t, err, "no PEM certificate")
+
+	// An unreadable client keypair fails at Load.
+	_, err = loadCH(t, "clickhouse:\n  tls:\n    enabled: true\n")
+	require.NoError(t, err) // enabled alone (system roots, no client cert) is valid
+	_, err = loadCH(t, fmt.Sprintf("clickhouse:\n  tls:\n    enabled: true\n    cert_file: %q\n    key_file: /no/such/key.pem\n", certPath))
+	require.ErrorContains(t, err, "key_file /no/such/key.pem")
 }
