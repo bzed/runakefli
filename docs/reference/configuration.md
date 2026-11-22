@@ -161,7 +161,7 @@ migration at this user, then drop it with `DROP USER runakefli_migrate`.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `query.querier.multi_tenant_queries_enabled` | bool | `false` | When `true`, a query whose `X-Scope-OrgID` names several tenants (`a|b`) is answered by querying each tenant and labelling results with `__tenant_id__` (Loki's multi-tenant queries). Multi-tenant queries always run on the plain engine (no SQL push-down). When `false` (the default), such a request is rejected with `multiple org IDs present`. This also applies to `index/stats`, `index/volume`, `index/volume_range`, `detected_labels` and `patterns`. |
+| `query.querier.multi_tenant_queries_enabled` | bool | `false` | When `true`, a query whose `X-Scope-OrgID` names several tenants (`a|b`) is answered by querying each tenant and labelling results with `__tenant_id__` (Loki's multi-tenant queries). Multi-tenant queries always run on the plain engine (no SQL push-down). This covers the query endpoints (`query`, `query_range`), `series`, `label` names/values and `detected_fields`. It does **not** cover `index/stats`, `index/volume`, `index/volume_range`, `detected_labels` and `patterns`: those are not wired to the fan-out yet, so with either flag value a multi-tenant `X-Scope-OrgID` is rejected with `multiple org IDs present` (500) (#42). |
 
 ## `compactor`
 
