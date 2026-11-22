@@ -38,7 +38,7 @@ EOF
 sudo apt update && sudo apt install runakefli
 ```
 
-The key's fingerprint is `74E9 21AC B040 DCC7 2C02  A144 1193 7B6E A8AF C649`.
+The key's fingerprint is `6560 068E B9BB AB40 9577  ABDD 5862 6C8A 9047 C0E9`.
 Use `Suites: trixie-snapshot` to follow `main` instead of the releases.
 
 The package installs `/usr/bin/runakefli`, the man page, a hardened systemd
