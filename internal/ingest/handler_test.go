@@ -556,3 +556,45 @@ func TestPush_NoStreamsIsBadRequest(t *testing.T) {
 	rec := push(t, h, "t-nostreams", `{"streams":[]}`)
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 }
+
+// A stream matched by policy_stream_mapping is counted under its policy; when
+// several policies match, the first is used and a warning is logged, as in
+// Loki's request-scoped stream resolver.
+func TestPush_PolicyStreamMapping(t *testing.T) {
+	conn, _ := chtest.New(t)
+	var l validation.Limits
+	l.RegisterFlags(flag.NewFlagSet("t", flag.PanicOnError))
+	l.PolicyStreamMapping = validation.PolicyStreamMapping{
+		"finance": {{Selector: `{app="web"}`, Priority: 1}},
+		"ops":     {{Selector: `{app="web"}`, Priority: 1}},
+	}
+	require.NoError(t, l.PolicyStreamMapping.Validate())
+	o, err := validation.NewOverrides(l, nil)
+	require.NoError(t, err)
+	var logs bytes.Buffer
+	h := &ingest.Handler{Writer: &chstore.Writer{Conn: conn}, Limits: o, Logger: log.NewLogfmtLogger(log.NewSyncWriter(&logs))}
+
+	body := `{"streams":[{"stream":{"app":"web"},"values":[["` + itoa(time.Now().UnixNano()) + `","a"]]}]}`
+	rec := push(t, h, "t-policy", body)
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	require.Contains(t, logs.String(), "multiple policies matched for the same stream")
+
+	fams, err := prometheus.DefaultGatherer.Gather()
+	require.NoError(t, err)
+	var policy string
+	for _, f := range fams {
+		if f.GetName() != "loki_distributor_lines_received_total" {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			lbl := map[string]string{}
+			for _, p := range m.GetLabel() {
+				lbl[p.GetName()] = p.GetValue()
+			}
+			if lbl["tenant"] == "t-policy" {
+				policy = lbl["policy"]
+			}
+		}
+	}
+	require.Contains(t, []string{"finance", "ops"}, policy)
+}
