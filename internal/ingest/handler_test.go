@@ -2,18 +2,22 @@ package ingest_test
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/go-kit/log"
 	"github.com/grafana/dskit/flagext"
+	"github.com/grafana/dskit/limiter"
 	"github.com/grafana/dskit/user"
 	lokipush "github.com/grafana/loki/v3/pkg/loghttp/push"
 	"github.com/grafana/loki/v3/pkg/validation"
@@ -242,6 +246,146 @@ func TestPush_BodyTooLarge(t *testing.T) {
 	rec := push(t, h, "t1", body)
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), "request body too large")
+}
+
+// A push over the in-flight byte budget is refused before its body is read,
+// and a second push is admitted once the first one finished.
+func TestHandler_InflightBudgetRejectsBeforeReading(t *testing.T) {
+	conn, _ := chtest.New(t)
+	h := &ingest.Handler{
+		Writer: &chstore.Writer{Conn: conn}, Limits: defaultLimits(t), Logger: log.NewNopLogger(),
+		MaxInflightBytes: 1024,
+	}
+	const tenant = "t-inflight"
+
+	pr, pw := io.Pipe()
+	// Closing a pipe *PipeWriter is idempotent, so the cleanup cannot hurt a
+	// request that already completed.
+	t.Cleanup(func() { _ = pw.Close() })
+	reqA := httptest.NewRequest(http.MethodPost, "/loki/api/v1/push", pr)
+	reqA.Header.Set("Content-Type", "application/json")
+	reqA.ContentLength = 2048 // over the budget once reserved
+	reqA = reqA.WithContext(user.InjectOrgID(reqA.Context(), tenant))
+	recA := httptest.NewRecorder()
+	doneA := make(chan struct{})
+	go func() {
+		defer close(doneA)
+		h.ServeHTTP(recA, reqA)
+	}()
+
+	// A pipe write returns once the reader consumed the bytes, so after this
+	// the handler is inside the parser and blocked waiting for the rest.
+	_, err := pw.Write([]byte("{"))
+	require.NoError(t, err)
+
+	var readB atomic.Bool
+	reqB := httptest.NewRequest(http.MethodPost, "/loki/api/v1/push",
+		readerFunc(func([]byte) (int, error) {
+			readB.Store(true)
+			return 0, io.EOF
+		}))
+	reqB = reqB.WithContext(user.InjectOrgID(reqB.Context(), tenant))
+	recB := httptest.NewRecorder()
+	h.ServeHTTP(recB, reqB)
+	require.Equal(t, http.StatusServiceUnavailable, recB.Code, recB.Body.String())
+	require.Contains(t, recB.Body.String(), "the server cannot accept more requests at this time")
+	require.False(t, readB.Load(), "the refused push body must not be read")
+
+	body := `{"streams":[{"stream":{"app":"a"},"values":[["` + itoa(time.Now().UnixNano()) + `","x"]]}]}`
+	_, err = pw.Write([]byte(body[1:]))
+	require.NoError(t, err)
+	require.NoError(t, pw.Close())
+	select {
+	case <-doneA:
+	case <-time.After(10 * time.Second):
+		t.Fatal("request A did not finish after its body was sent")
+	}
+	require.Equal(t, http.StatusNoContent, recA.Code, recA.Body.String())
+
+	// The first request released its reservation.
+	recC := push(t, h, tenant, body)
+	require.Equal(t, http.StatusNoContent, recC.Code, recC.Body.String())
+}
+
+// Every exit path releases the reservation: a request after each outcome is
+// admitted, proving the counter is back at zero.
+func TestHandler_InflightReleasedOnEveryOutcome(t *testing.T) {
+	conn, _ := chtest.New(t)
+	h := &ingest.Handler{
+		Writer: &chstore.Writer{Conn: conn}, Limits: defaultLimits(t), Logger: log.NewNopLogger(),
+		RateLimiter:      limiter.NewRateLimiter(denyTenantStrategy{tenant: "t-limited"}, time.Minute),
+		MaxInflightBytes: 1, // any reservation exceeds it
+	}
+	const tenant = "t-release"
+	ts := time.Now().UnixNano()
+	valid := `{"streams":[{"stream":{"app":"web"},"values":[["` + itoa(ts) + `","x"]]}]}`
+
+	require.Equal(t, http.StatusBadRequest, push(t, h, tenant, "invalid json").Code)
+
+	rec := push(t, h, "t-limited", valid)
+	require.Equal(t, http.StatusTooManyRequests, rec.Code, rec.Body.String())
+
+	// No Content-Length (chunked): nothing to reserve at admission.
+	req := httptest.NewRequest(http.MethodPost, "/loki/api/v1/push", strings.NewReader(valid))
+	req.Header.Set("Content-Type", "application/json")
+	req.ContentLength = -1
+	req = req.WithContext(user.InjectOrgID(req.Context(), tenant))
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+
+	rec = push(t, h, tenant, valid)
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+}
+
+// The decompressed body is capped by limits_config.max_push_size, not by a
+// fixed 5 GiB constant.
+func TestHandler_DecompressedCapIsMaxPushSize(t *testing.T) {
+	conn, _ := chtest.New(t)
+	var l validation.Limits
+	l.RegisterFlags(flag.NewFlagSet("t", flag.PanicOnError))
+	require.NoError(t, l.MaxPushSize.Set("1KB"))
+	o, err := validation.NewOverrides(l, nil)
+	require.NoError(t, err)
+	h := &ingest.Handler{Writer: &chstore.Writer{Conn: conn}, Limits: o, Logger: log.NewNopLogger()}
+
+	var gz bytes.Buffer
+	zw := gzip.NewWriter(&gz)
+	_, err = zw.Write([]byte(`{"streams":[{"stream":{"app":"web"},"values":[["1","` + strings.Repeat("x", 2048) + `"]]}]}`))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+
+	req := httptest.NewRequest(http.MethodPost, "/loki/api/v1/push", &gz)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+	req = req.WithContext(user.InjectOrgID(req.Context(), "t-decomp"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "request body too large")
+}
+
+// readerFunc adapts a function to io.Reader.
+type readerFunc func([]byte) (int, error)
+
+func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
+
+// denyTenantStrategy rejects every push of one tenant at the rate limiter and
+// leaves the others unlimited.
+type denyTenantStrategy struct{ tenant string }
+
+func (s denyTenantStrategy) Limit(tenant string) float64 {
+	if tenant == s.tenant {
+		return 0
+	}
+	return 1 << 30
+}
+
+func (s denyTenantStrategy) Burst(tenant string) int {
+	if tenant == s.tenant {
+		return 0
+	}
+	return 1 << 30
 }
 
 func TestPush_InvalidBackfillShard(t *testing.T) {

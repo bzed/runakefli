@@ -83,8 +83,26 @@ type Config struct {
 	Ruler        lokiruler.Config  `yaml:"ruler"`         // Loki's ruler block, Loki's keys and defaults
 	RulerStorage rulestore.Config  `yaml:"ruler_storage"` // the ruler runs only when this is set
 	LimitsConfig validation.Limits `yaml:"limits_config"`
+	Distributor  DistributorConfig `yaml:"distributor"`
 
 	chTLS *tls.Config // loaded at Load; set only when ClickHouse.TLS.Enabled
+}
+
+// DistributorConfig is the subset of Loki's distributor block Rúnakefli
+// supports. Every other key under distributor is rejected by strict decoding.
+type DistributorConfig struct {
+	// MaxInflightBytes is Loki's distributor.max_inflight_bytes: the maximum
+	// uncompressed bytes held by pushes at once. 0 disables the bound.
+	MaxInflightBytes int `yaml:"max_inflight_bytes"`
+}
+
+// Validate rejects values Loki's distributor configuration rejects.
+func (c DistributorConfig) Validate() error {
+	// Copied from grafana/loki@acaa752c17c1560eead5a33d04d63ed877d4a6de pkg/distributor/distributor.go; modifications: a method on the subset of the block runakefli supports.
+	if c.MaxInflightBytes < 0 {
+		return errors.New("max inflight bytes cannot be less than zero")
+	}
+	return nil
 }
 
 // PushdownModes are the valid values for query.pushdown.
@@ -162,6 +180,9 @@ func Load(path string, expandEnv bool) (*Config, error) {
 	}
 	if err := c.LimitsConfig.Validate(); err != nil {
 		return nil, fmt.Errorf("limits_config: %w", err)
+	}
+	if err := c.Distributor.Validate(); err != nil {
+		return nil, err
 	}
 	if !PushdownModes[c.Query.Pushdown] {
 		return nil, fmt.Errorf("query.pushdown: invalid value %q (want on, off or downstream)", c.Query.Pushdown)

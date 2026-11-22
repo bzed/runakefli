@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	lokipush "github.com/grafana/loki/v3/pkg/loghttp/push"
 	"github.com/stretchr/testify/require"
 
 	"github.com/bzed/runakefli/internal/chstore"
@@ -35,6 +36,34 @@ limits_config: {max_line_size: 1024}
 	require.EqualValues(t, 1024, c.LimitsConfig.MaxLineSize)
 	require.Equal(t, 7*24*time.Hour, time.Duration(c.LimitsConfig.RejectOldSamplesMaxAge)) // Loki default kept
 	require.Equal(t, chstore.Topology{}, c.Topology())                                     // single node by default
+}
+
+func TestLoad_DistributorMaxInflightBytes(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "c.yaml")
+	require.NoError(t, os.WriteFile(p, []byte("distributor:\n  max_inflight_bytes: 1048576\n"), 0o600))
+	c, err := Load(p, false)
+	require.NoError(t, err)
+	require.Equal(t, 1048576, c.Distributor.MaxInflightBytes)
+
+	require.NoError(t, os.WriteFile(p, []byte("distributor:\n  max_inflight_bytes: -1\n"), 0o600))
+	_, err = Load(p, false)
+	require.ErrorContains(t, err, "max inflight bytes cannot be less than zero")
+
+	// Only max_inflight_bytes is supported in the block.
+	require.NoError(t, os.WriteFile(p, []byte("distributor:\n  foo: 1\n"), 0o600))
+	_, err = Load(p, false)
+	require.ErrorContains(t, err, "foo")
+}
+
+// config.Load applies Loki's distributor OTLP defaults to the limits, so
+// service.name is a stream label for OTLP pushes (Loki's cmd/loki/main.go).
+func TestLoad_OTLPDefaultsIndexServiceName(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "c.yaml")
+	require.NoError(t, os.WriteFile(p, []byte("{}\n"), 0o600))
+	c, err := Load(p, false)
+	require.NoError(t, err)
+	require.NotNil(t, c.LimitsConfig.OTLPConfig)
+	require.Equal(t, lokipush.IndexLabel, c.LimitsConfig.OTLPConfig.ActionForResourceAttribute("service.name"))
 }
 
 func TestLoad_Compactor(t *testing.T) {

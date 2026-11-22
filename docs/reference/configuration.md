@@ -1,5 +1,5 @@
 ---
-description: Every Rúnakefli configuration key with its default: server, clickhouse, query, compactor, ruler, ruler_storage and limits_config.
+description: Every Rúnakefli configuration key with its default: server, clickhouse, query, compactor, distributor, ruler, ruler_storage and limits_config.
 ---
 
 # Configuration
@@ -22,9 +22,9 @@ from the code.
 
 The blocks are: [`server`](#server), [`auth_enabled`](#auth_enabled),
 [`clickhouse`](#clickhouse), [`query`](#query), [`compactor`](#compactor),
-[`limits_config`](#limits_config) (Loki's, including
-[retention](#retention)), [`ruler`](#ruler) and [`ruler_storage`](#ruler_storage)
-(Loki's).
+[`distributor`](#distributor), [`limits_config`](#limits_config) (Loki's,
+including [retention](#retention)), [`ruler`](#ruler) and
+[`ruler_storage`](#ruler_storage) (Loki's).
 
 The command line has three flags: `-config.file` (default `runakefli.yaml`),
 `-config.expand-env` and `-version`; see `man runakefli`.
@@ -245,6 +245,21 @@ The full set of keys is documented in the
 > Configure the ruler on exactly one instance; otherwise alerts and
 > recording-rule samples are duplicated.
 
+## `distributor`
+
+The subset of Loki's `distributor` block that Rúnakefli supports. Strict
+parsing applies: any other key under `distributor` is rejected at startup, as
+in Loki.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `distributor.max_inflight_bytes` | int | `0` (disabled) | Maximum bytes of push bodies held in flight at once (Loki's key and semantics); `0` disables the cap. A push over the budget is refused with `503` and Loki's `the server cannot accept more requests at this time` *before its body is read*. Rúnakefli also charges the received `Content-Length` at admission, so a concurrent push cannot slip in while the first is still decompressing. Size the process memory limit above this value ([Operations → Memory](../operations.md#memory)). |
+
+```yaml
+distributor:
+  max_inflight_bytes: 536870912   # 512 MiB
+```
+
 ## `limits_config`
 
 Loki's `validation.Limits` block. Every key Loki accepts is accepted here,
@@ -257,6 +272,11 @@ code reads and ignores the rest. See
 **Limits apply to every tenant.** Rúnakefli has no per-tenant overrides
 (`runtime_config`, `-runtime-config.file`): a tenant cannot have its own
 retention or rate limit. See [Differences from Loki](https://github.com/bzed/runakefli/blob/main/docs/divergences.md).
+
+A push's received body is capped at 100 MiB (Loki's distributor default,
+fixed); its decompressed body is capped by `limits_config.max_push_size`
+(default `2GB`). Bytes held by concurrent pushes are bounded separately by
+[`distributor.max_inflight_bytes`](#distributor).
 
 Rúnakefli acts on the keys listed under [Retention](#retention) and in
 [Operations → Limits](../operations.md#limits). The remaining keys are accepted
@@ -318,6 +338,7 @@ How it works, and what differs from Loki:
 | --- | --- | --- |
 | `limits_config.deletion_mode` | `filter-and-delete` | `disabled`, `filter-only` or `filter-and-delete`; see [`compactor`](#compactor). |
 | `limits_config.ingestion_rate_mb`, `ingestion_burst_size_mb` | `4`, `6` | Push rate limit, enforced per Rúnakefli instance. |
+| `limits_config.max_push_size` | `2GB` | Largest accepted decompressed push body; a larger push is rejected with `400`. The received (compressed) body stays capped at 100 MiB. |
 | `limits_config.max_query_series` | `500` | Hard cap on the number of series a metric query may return. `0` removes the cap. |
 | `limits_config.max_query_lookback` | `0s` (no limit) | Maximum lookback for a query. |
 | `limits_config.max_query_length` | `30d1h` | Longest time range of a query. |

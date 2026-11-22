@@ -17,3 +17,7 @@ clickhouse:
   password: '${RUNAKEFLI_CLICKHOUSE_PASSWORD:-}'
   password_file: ${RUNAKEFLI_CLICKHOUSE_PASSWORD_FILE:-}
 limits_config: {}
+# Refuse pushes while more than 512 MiB of push bodies are being decoded; keep
+# the container memory limit above this (see docs/operations.md).
+distributor:
+  max_inflight_bytes: 536870912

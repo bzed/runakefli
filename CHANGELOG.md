@@ -10,6 +10,7 @@ changelog (`debian/changelog`) carries the same releases.
 
 - `POST /otlp/v1/logs` no longer aborts the connection on every request with log records; OTLP ingest works (#41).
 - `deletion_mode: filter-only` no longer physically deletes rows; only `filter-and-delete` tenants' requests are applied by the processor (#38).
+- Pushes are bounded: new `distributor.max_inflight_bytes` (Loki's key) refuses pushes with 503 while too many bytes are in flight, and the decompressed body is capped by `limits_config.max_push_size` instead of 5 GiB (#39).
 
 ## [1.1.0] - 2026-11-22
 

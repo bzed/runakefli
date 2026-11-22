@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-kit/log"
@@ -24,10 +25,8 @@ import (
 // chstore.MaxPushPartitions partitions in Loki's discarded-data metrics.
 const reasonTooManyPartitions = "too_many_partitions"
 
-const (
-	maxRecvMsgSize      = 100 << 20 // Loki's distributor default (-distributor.max-recv-msg-size)
-	maxDecompressedSize = 5000 << 20
-)
+// maxRecvMsgSize is Loki's distributor default (-distributor.max-recv-msg-size).
+const maxRecvMsgSize = 100 << 20
 
 // Handler handles Loki push requests and writes them to ClickHouse.
 // RateLimiter is nil when the rate limit is disabled.
@@ -38,9 +37,19 @@ type Handler struct {
 	RateLimiter *limiter.RateLimiter
 
 	// MaxRecvMsgSize and MaxDecompressedSize bound a push body; zero selects
-	// the package defaults.
+	// the package default (100 MiB) and limits_config.max_push_size (Loki's
+	// 2GB) respectively.
 	MaxRecvMsgSize      int
 	MaxDecompressedSize int64
+
+	// MaxInflightBytes bounds the bytes of push bodies held in flight; 0
+	// disables the bound (Loki's distributor.max_inflight_bytes).
+	MaxInflightBytes int64
+
+	// inflightBytes is the current reservation, updated atomically. It is
+	// maintained even when MaxInflightBytes is 0, so the high-watermark
+	// metric reports what Loki's would.
+	inflightBytes atomic.Int64
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -58,8 +67,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		recvSize = maxRecvMsgSize
 	}
 	if decompSize == 0 {
-		decompSize = maxDecompressedSize
+		decompSize = int64(h.Limits.MaxPushSize(tenantID))
 	}
+	// Set on every request rather than once, because a Handler has no
+	// constructor; the gauge describes the handler that is serving.
+	maxInflightBytesGauge.Set(float64(h.MaxInflightBytes))
+	// Refuse before reading the body, as in Loki's distributor.
+	if h.MaxInflightBytes > 0 && h.inflightBytes.Load() >= h.MaxInflightBytes {
+		http.Error(w, errServiceUnavailableMaxLoad.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	// Reserve what is already known about the body, so a concurrent push is
+	// refused while this one is still decompressing. Loki reserves only the
+	// parsed size, after parsing (see docs/divergences.md).
+	reserved := receivedInflightBytes(r, recvSize)
+	h.inflightBytes.Add(reserved)
+	h.observeInflight()
+	defer func() { h.inflightBytes.Add(-reserved) }()
+
 	// One resolver per request, so every stream of the push sees the same
 	// retention and policy snapshot, as in Loki's distributor.
 	resolver := newStreamResolver(tenantID, h.Limits, h.Logger)
@@ -68,6 +93,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Replace the received-size reservation with the parsed size, as Loki
+	// charges its inflight budget.
+	if size := int64(req.Size()); size != reserved {
+		h.inflightBytes.Add(size - reserved)
+		reserved = size
+	}
+	h.observeInflight()
 	res, verr := distcopy.Prepare(r.Context(), h.Limits, tenantID, req, time.Now())
 	if h.RateLimiter != nil && len(res.Streams) > 0 && !h.RateLimiter.AllowN(time.Now(), tenantID, res.Bytes) {
 		// Rejected before the write, as in Loki's distributor: nothing is
