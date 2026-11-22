@@ -7,7 +7,8 @@ description: Run Rúnakefli in production: per-tenant limits, health checks, del
 ## Limits
 
 Rúnakefli enforces Loki®'s `limits_config` keys at the points below. A tenant is
-the value of the `X-Scope-OrgID` header.
+the value of the `X-Scope-OrgID` header, or `fake` when `auth_enabled` is
+`false` (the header is then ignored).
 
 ### Ingestion
 
@@ -25,8 +26,22 @@ the value of the `X-Scope-OrgID` header.
 | `retention_period`, `retention_stream` | push | applied by the retention sweeper; see [Retention](reference/configuration.md#retention). |
 | `deletion_mode` | delete API | Whether delete requests are accepted. |
 
-The size of one push is bounded by fixed limits (100 MiB compressed, 5000 MiB
-decompressed, Loki's defaults); they are not configurable.
+The received body of one push is capped at 100 MiB (fixed). Its decompressed
+size is capped by `limits_config.max_push_size` (default `2GB`), and the bytes
+held by all pushes at once by `distributor.max_inflight_bytes` (default `0`,
+disabled). See [Memory](#memory).
+
+### Memory
+
+Each push is decompressed and validated in memory before it reaches the rate
+limiter. With `distributor.max_inflight_bytes` set, the budget bounds the
+received bodies held at once; the parsed request is charged after parsing, so
+the peak can exceed the budget by the pushes that were already admitted.
+`max_push_size` bounds a single push, not their sum. Size the process limit
+above the budget: set `GOMEMLIMIT` (for example `4GiB`) so the Go runtime
+collects sooner, and a systemd `MemoryMax=` or the container's memory limit
+(for example `5G`) so the kernel stops a runakefli that grows past it instead
+of the host's OOM killer choosing a victim.
 
 ### Query
 

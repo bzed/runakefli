@@ -11,7 +11,7 @@
 # 1h, 7d, 1w); sizes take 256KB, 4MB, 2GB.
 
 # true: clients must send X-Scope-OrgID (Loki's default). false: one tenant,
-# the header is ignored.
+# "fake"; the header is ignored.
 auth_enabled: false
 
 server:
@@ -76,6 +76,13 @@ query:
 #   delete_request_cancel_period: 24h     # a delete request can be cancelled for this long
 #   delete_max_interval: 24h
 
+# Bound the bytes of pushes being decoded at once. While the pushes in flight
+# hold the budget, a new push is refused with 503 before its body is read. 0
+# (Loki's default) disables the bound; size the process memory limit above it
+# (see docs/operations.md).
+distributor:
+  max_inflight_bytes: 536870912   # 512 MiB
+
 # Loki's limits_config. Loki's keys and defaults; the values apply to every
 # tenant (runakefli has no per-tenant overrides, see docs/divergences.md).
 # Shown here are the keys runakefli acts on; every other Loki key is accepted
@@ -95,6 +102,7 @@ limits_config:
   # Ingestion (rate limits are per runakefli instance, not per cluster).
   # ingestion_rate_mb: 4
   # ingestion_burst_size_mb: 6
+  # max_push_size: 2GB                   # decompressed body of one push (received body is capped at 100 MiB)
   # max_line_size: 256KB
   # max_line_size_truncate: false
   # max_label_name_length: 1024

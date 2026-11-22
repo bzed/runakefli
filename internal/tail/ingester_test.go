@@ -219,7 +219,7 @@ func TestTail_CloseStopsPolling(t *testing.T) {
 
 	// TailersCount drops to zero (the decrement runs in a goroutine).
 	require.Eventually(t, func() bool {
-		n, e := i.TailersCount(context.Background())
+		n, e := i.TailersCount(orgCtx())
 		return e == nil && n[0] == 0
 	}, 2*time.Second, 20*time.Millisecond)
 
@@ -277,4 +277,55 @@ func TestTailersCount(t *testing.T) {
 	n, err := i.TailersCount(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []uint32{0}, n)
+}
+
+// TailersCount reports the calling tenant's tails only: one tenant's tails must
+// not count against another tenant's max_concurrent_tail_requests.
+func TestIngester_TailersCountPerTenant(t *testing.T) {
+	i := &lt.Ingester{} // Tail only parses the query; no ClickHouse needed
+	req := tailReq(`{app="t"}`, time.Now())
+
+	ctxA1, cancelA1 := context.WithCancel(user.InjectOrgID(context.Background(), "a"))
+	defer cancelA1()
+	ctxA2, cancelA2 := context.WithCancel(user.InjectOrgID(context.Background(), "a"))
+	defer cancelA2()
+	ctxB, cancelB := context.WithCancel(user.InjectOrgID(context.Background(), "b"))
+	defer cancelB()
+
+	for _, ctx := range []context.Context{ctxA1, ctxA2, ctxB} {
+		clients, err := i.Tail(ctx, req)
+		require.NoError(t, err)
+		require.Len(t, clients, 1)
+	}
+
+	count := func(ctx context.Context) []uint32 {
+		n, err := i.TailersCount(ctx)
+		require.NoError(t, err)
+		require.Len(t, n, 1)
+		return n
+	}
+	require.Equal(t, []uint32{2}, count(ctxA1))
+	require.Equal(t, []uint32{1}, count(ctxB))
+	require.Equal(t, []uint32{0}, count(user.InjectOrgID(context.Background(), "c")))
+
+	// Canceling a tenant's tails drops only that tenant's count.
+	cancelA1()
+	cancelA2()
+	require.Eventually(t, func() bool {
+		n, err := i.TailersCount(ctxA1)
+		return err == nil && len(n) == 1 && n[0] == 0
+	}, 2*time.Second, 10*time.Millisecond)
+	require.Equal(t, []uint32{1}, count(ctxB))
+}
+
+// Without a tenant a tail cannot be attributed to anyone; both calls report
+// the tenant error instead of counting process-wide or panicking.
+func TestIngester_NoOrgID(t *testing.T) {
+	i := &lt.Ingester{}
+
+	_, err := i.Tail(context.Background(), tailReq(`{app="t"}`, time.Now()))
+	require.Error(t, err)
+
+	_, err = i.TailersCount(context.Background())
+	require.Error(t, err)
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/go-kit/log"
 	"github.com/grafana/dskit/user"
+	"github.com/grafana/loki/v3/pkg/compactor/deletion/deletionproto"
 	"github.com/grafana/loki/v3/pkg/logproto"
 	"github.com/grafana/loki/v3/pkg/logql"
 	logqlmodel "github.com/grafana/loki/v3/pkg/logql/model"
@@ -27,18 +28,20 @@ import (
 // newProcessor builds a Processor over a fresh database with a fixed clock.
 // now controls the "current time" for the cancel-period check; created is the
 // time requests are created at (so ProcessDue only acts on requests old enough).
-func newProcessor(t *testing.T, cancelPeriod, interval time.Duration, now, created time.Time) (*deletes.Processor, *deletes.Store, driver.Conn, string) {
+// mode is the tenant's deletion_mode.
+func newProcessor(t *testing.T, mode string, cancelPeriod, interval time.Duration, now, created time.Time) (*deletes.Processor, *deletes.Store, driver.Conn, string) {
 	conn, db := chtest.New(t)
-	p, store, _ := buildProcessor(conn, db, cancelPeriod, interval, now, created)
+	p, store, _ := buildProcessor(conn, db, mode, cancelPeriod, interval, now, created)
 	return p, store, conn, db
 }
 
 // buildProcessor wires a Processor over an existing conn+db (so a test can
 // swap conn for a fault-injecting wrapper).
-func buildProcessor(conn driver.Conn, db string, cancelPeriod, interval time.Duration, now, created time.Time) (*deletes.Processor, *deletes.Store, driver.Conn) {
+func buildProcessor(conn driver.Conn, db, mode string, cancelPeriod, interval time.Duration, now, created time.Time) (*deletes.Processor, *deletes.Store, driver.Conn) {
 	store := &deletes.Store{Conn: conn, Now: func() time.Time { return created }}
 	p := &deletes.Processor{
 		Store: store, Conn: conn, DB: db, Topo: chtest.Topology(),
+		Limits:       modeLimits{"t1": mode},
 		CancelPeriod: cancelPeriod, Interval: interval, Logger: log.NewNopLogger(),
 		Now: func() time.Time { return now },
 	}
@@ -110,7 +113,7 @@ func queryTimeLines(t *testing.T, conn driver.Conn, store *deletes.Store, q stri
 }
 
 func TestProcessor_MatchesQueryTimeFilter(t *testing.T) {
-	p, store, conn, _ := newProcessor(t, 0, time.Hour, t0, t0)
+	p, store, conn, _ := newProcessor(t, "filter-and-delete", 0, time.Hour, t0, t0)
 
 	w := &chstore.Writer{Conn: conn}
 	base := t0
@@ -158,7 +161,7 @@ func TestProcessor_MatchesQueryTimeFilter(t *testing.T) {
 }
 
 func TestProcessor_SelectorOnly(t *testing.T) {
-	p, store, conn, _ := newProcessor(t, 0, time.Hour, t0, t0)
+	p, store, conn, _ := newProcessor(t, "filter-and-delete", 0, time.Hour, t0, t0)
 
 	w := &chstore.Writer{Conn: conn}
 	base := t0
@@ -182,7 +185,7 @@ func TestProcessor_SelectorOnly(t *testing.T) {
 
 func TestProcessor_RespectsCancelPeriod(t *testing.T) {
 	// CancelPeriod 1h; now = created + 59m -> nothing is due.
-	p, store, conn, _ := newProcessor(t, time.Hour, time.Hour, t0.Add(59*time.Minute), t0)
+	p, store, conn, _ := newProcessor(t, "filter-and-delete", time.Hour, time.Hour, t0.Add(59*time.Minute), t0)
 
 	w := &chstore.Writer{Conn: conn}
 	base := t0
@@ -209,7 +212,7 @@ func TestProcessor_FaultIsolation(t *testing.T) {
 	// be processed in the same pass (per-request fault isolation), and req1 is
 	// retried to completion on the next pass.
 	conn, db := chtest.New(t)
-	p, store, _ := buildProcessor(conn, db, 0, time.Hour, t0, t0)
+	p, store, _ := buildProcessor(conn, db, "filter-and-delete", 0, time.Hour, t0, t0)
 
 	w := &chstore.Writer{Conn: conn}
 	base := t0
@@ -251,7 +254,7 @@ func TestProcessor_FaultIsolation(t *testing.T) {
 }
 
 func TestProcessor_RunQuietOnShutdown(t *testing.T) {
-	p, _, _, _ := newProcessor(t, time.Hour, time.Hour, time.Now(), time.Now())
+	p, _, _, _ := newProcessor(t, "filter-and-delete", time.Hour, time.Hour, time.Now(), time.Now())
 	var buf bytes.Buffer
 	p.Logger = log.NewLogfmtLogger(&buf)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -262,7 +265,7 @@ func TestProcessor_RunQuietOnShutdown(t *testing.T) {
 
 func TestProcessor_ParserStageScans(t *testing.T) {
 	// {app="a"} | logfmt | level="debug" must take the scan path (not DeleteRange).
-	p, store, conn, _ := newProcessor(t, 0, time.Hour, t0, t0)
+	p, store, conn, _ := newProcessor(t, "filter-and-delete", 0, time.Hour, t0, t0)
 
 	w := &chstore.Writer{Conn: conn}
 	base := t0
@@ -307,11 +310,47 @@ func seedSecret(t *testing.T, conn driver.Conn, store *deletes.Store) {
 }
 
 func TestProcessor_PhysicallyRemovesRows(t *testing.T) {
-	p, store, conn, _ := newProcessor(t, 0, time.Hour, t0, t0)
+	p, store, conn, _ := newProcessor(t, "filter-and-delete", 0, time.Hour, t0, t0)
 	seedSecret(t, conn, store)
 	require.NoError(t, p.ProcessDue(context.Background(), t0))
 	require.Equal(t, []string{"keep"}, lines(t, conn, "t1"))
 	require.Equal(t, uint64(1), storedRows(t, conn, "t1"), "masked rows must be gone from disk")
+}
+
+// assertSecretKept checks that a seeded delete request removed nothing: all
+// rows are on disk and the request is still pending (received), so the
+// query-time filter keeps hiding the matching lines.
+func assertSecretKept(t *testing.T, conn driver.Conn, store *deletes.Store) {
+	t.Helper()
+	got := lines(t, conn, "t1")
+	sort.Strings(got)
+	require.Equal(t, []string{"keep", "secret x", "secret y"}, got)
+	require.Equal(t, uint64(3), storedRows(t, conn, "t1"), "no row may leave the disk")
+	reqs, err := store.Unprocessed(context.Background())
+	require.NoError(t, err)
+	require.Len(t, reqs, 1, "the request stays pending")
+	require.Equal(t, deletionproto.StatusReceived, reqs[0].Status)
+}
+
+func TestProcessor_FilterOnlyKeepsRows(t *testing.T) {
+	p, store, conn, _ := newProcessor(t, "filter-only", 0, time.Hour, t0, t0)
+	seedSecret(t, conn, store)
+	require.NoError(t, p.ProcessDue(context.Background(), t0))
+	assertSecretKept(t, conn, store)
+}
+
+func TestProcessor_DisabledOrInvalidModeKeepsRows(t *testing.T) {
+	for _, mode := range []string{"disabled", "bogus"} {
+		t.Run(mode, func(t *testing.T) {
+			p, store, conn, _ := newProcessor(t, mode, 0, time.Hour, t0, t0)
+			seedSecret(t, conn, store)
+			err := p.ProcessDue(context.Background(), t0)
+			if mode == "disabled" {
+				require.NoError(t, err, "a disabled tenant is not an error")
+			}
+			assertSecretKept(t, conn, store)
+		})
+	}
 }
 
 // maskFailConn fails the first APPLY DELETED MASK, to check the next pass retries it.
@@ -331,7 +370,7 @@ func (f *maskFailConn) Exec(ctx context.Context, q string, args ...any) error {
 func TestProcessor_RetriesDeletedMask(t *testing.T) {
 	conn, db := chtest.New(t)
 	fc := &maskFailConn{Conn: conn}
-	p, store, _ := buildProcessor(fc, db, 0, time.Hour, t0, t0)
+	p, store, _ := buildProcessor(fc, db, "filter-and-delete", 0, time.Hour, t0, t0)
 	seedSecret(t, conn, store)
 
 	require.Error(t, p.ProcessDue(context.Background(), t0))

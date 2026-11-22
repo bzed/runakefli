@@ -1,4 +1,4 @@
-// Copied from grafana/loki@acaa752c17c1560eead5a33d04d63ed877d4a6de pkg/distributor/http.go (the parse part of pushHandler, recordParsedRequest) and pkg/distributor/metrics.go (bytesIngested, expandedBytesIngested, structuredMetadataBytesIngested, linesIngested, distributorLagByUserAgent, streamsPerPushRequest); modifications: a function instead of Distributor methods, no max_inflight_bytes check (runakefli has no such limit), collectors are package-level as they were in pkg/loghttp/push before #24739, errors are returned as push.ParseRequest returned them (400, not the distributor's 413), no tenant configs, usage tracker, stream resolver or presumed agent IP (runakefli passed nil/"" before), no analytics counters, push-stats-count, OTLP attribute reporter or push-stream logging.
+// Copied from grafana/loki@acaa752c17c1560eead5a33d04d63ed877d4a6de pkg/distributor/http.go (the parse part of pushHandler, recordParsedRequest) and pkg/distributor/metrics.go (bytesIngested, expandedBytesIngested, structuredMetadataBytesIngested, linesIngested, distributorLagByUserAgent, streamsPerPushRequest); modifications: a function instead of Distributor methods, no max_inflight_bytes check here (the handler enforces it before parsing, see inflight.go), collectors are package-level as they were in pkg/loghttp/push before #24739, errors are returned as push.ParseRequest returned them (400, not the distributor's 413), no tenant configs, usage tracker or presumed agent IP (runakefli passed nil/"" before), no analytics counters, push-stats-count, OTLP attribute reporter or push-stream logging.
 
 package ingest
 
@@ -60,7 +60,7 @@ var (
 // parsePush validates the backfill shard header, parses the request body with
 // parser and records Loki's push metrics. A push whose lines were all filtered
 // is a success: its metrics are recorded and the request is returned.
-func parsePush(r *http.Request, logger log.Logger, tenantID string, limits push.Limits, parser push.RequestParser, format string, maxRecvMsgSize int, maxDecompressedSize int64) (*logproto.InternalPushRequest, error) {
+func parsePush(r *http.Request, logger log.Logger, tenantID string, limits push.Limits, parser push.RequestParser, format string, maxRecvMsgSize int, maxDecompressedSize int64, resolver push.StreamResolver) (*logproto.InternalPushRequest, error) {
 	shard, ok, err := push.ExtractAndValidateBackfillShard(r)
 	if err != nil {
 		return nil, err
@@ -69,7 +69,7 @@ func parsePush(r *http.Request, logger log.Logger, tenantID string, limits push.
 		r = r.Clone(push.InjectBackfillShardContext(r.Context(), shard))
 	}
 
-	req, stats, err := parser(tenantID, r, limits, nil, maxRecvMsgSize, maxDecompressedSize, nil, nil, logger)
+	req, stats, err := parser(tenantID, r, limits, nil, maxRecvMsgSize, maxDecompressedSize, nil, resolver, logger)
 	if err != nil && !errors.Is(err, push.ErrAllLogsFiltered) {
 		if errors.Is(err, util.ErrMessageSizeTooLarge) || errors.Is(err, util.ErrMessageDecompressedSizeTooLarge) {
 			return nil, fmt.Errorf("%w: %s", push.ErrRequestBodyTooLarge, err.Error())

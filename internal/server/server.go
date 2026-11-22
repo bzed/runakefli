@@ -113,6 +113,7 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 	loops.Go(func() {
 		(&deletes.Processor{
 			Store: store, Conn: conn, DB: cfg.ClickHouse.Database, Topo: cfg.Topology(),
+			Limits:       limits,
 			CancelPeriod: cfg.Compactor.DeleteRequestCancelPeriod,
 			Interval:     cfg.Compactor.CompactionInterval,
 			Logger:       logger,
@@ -262,7 +263,8 @@ func newAPI(cfg *config.Config, conn driver.Conn, store *deletes.Store, dels del
 		Q:    q,
 		Meta: meta,
 		Push: &ingest.Handler{Writer: &chstore.Writer{Conn: conn}, Limits: limits, Logger: logger,
-			RateLimiter: ingest.NewRateLimiter(limits)},
+			RateLimiter:      ingest.NewRateLimiter(limits),
+			MaxInflightBytes: int64(cfg.Distributor.MaxInflightBytes)},
 		Limits:      limits,
 		Patterns:    &patterns.Querier{Q: q, Limits: limits, Logger: logger},
 		Deletes:     &deletes.Handler{Store: store, Limits: limits, MaxInterval: cfg.Compactor.DeleteMaxInterval, CancelPeriod: cfg.Compactor.DeleteRequestCancelPeriod},

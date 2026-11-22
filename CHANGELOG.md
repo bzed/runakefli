@@ -6,6 +6,14 @@ changelog (`debian/changelog`) carries the same releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- `POST /otlp/v1/logs` no longer aborts the connection on every request with log records; OTLP ingest works (#41).
+- `deletion_mode: filter-only` no longer physically deletes rows; only `filter-and-delete` tenants' requests are applied by the processor (#38).
+- Pushes are bounded: new `distributor.max_inflight_bytes` (Loki's key) refuses pushes with 503 while too many bytes are in flight, and the decompressed body is capped by `limits_config.max_push_size` instead of 5 GiB (#39).
+- `max_concurrent_tail_requests` is enforced per tenant; one tenant's tails no longer block every other tenant's (#40).
+- With `auth_enabled: false`, `X-Scope-OrgID` is ignored and every request uses tenant `fake`, as in Loki, so clients can no longer select a tenant; a client that relied on the header must set `auth_enabled: true` (#37).
+
 ## [1.1.0] - 2026-11-22
 
 Security release: the three confirmed issues of the November audit (#42, #44, #45) are fixed — the index and drilldown endpoints fan out per tenant again, the release workflow can no longer run signing-key scripts from an unreviewed tag, and the ClickHouse transport can be encrypted.
