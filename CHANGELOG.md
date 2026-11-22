@@ -12,6 +12,7 @@ changelog (`debian/changelog`) carries the same releases.
 - New divergences recorded from validating the tail delete path (#46): live tail polls hide lines covered by pending deletes, where Loki's live tail streams them unfiltered (Rúnakefli is stricter), and a failed delete-requests fetch fails the query or tail instead of Loki's serve-unfiltered.
 - CI: the `docs` workflow mirrors the site to S3 with `rclone` instead of `s3cmd`. Only files whose content changed are uploaded (the apt packages already in the bucket are skipped), uploads are single requests instead of multipart, and requests that the store answers with 503 are retried with a backoff for several minutes, so a Backblaze hiccup no longer fails the job.
 - CI: the `docs` workflow copies the site to S3 on releases only. A push to `main` still publishes to GitHub Pages, but no longer uploads to the bucket or deletes stale objects there.
+- CI: the `docs.yml` `build` and `apt` jobs check out `main` instead of whatever commit a `v*` tag points at (a release therefore publishes the docs of `main`), and the `apt` job (which imports the archive signing key) runs under the new `apt-signing` environment, which can hold the signing key as an environment secret and gate it with deployment rules and reviewers; `APT_GPG_PRIVATE_KEY` is no longer a required `workflow_call` secret (#44).
 
 ### Fixed
 
