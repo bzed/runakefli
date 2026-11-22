@@ -33,6 +33,7 @@ reason. Entries are grouped by topic.
 ## Tail
 
 - **Delivery:** Loki streams entries to a `/loki/api/v1/tail` WebSocket client as its ingesters receive them (push). Rúnakefli has no ingester to push from, so its tail client *polls* ClickHouse (every second by default) for rows with `ts` newer than now minus a 10 s lookback for late arrivals, deduplicated by a seen-set. Consequently an entry pushed later with a timestamp older than the current poll window, or with a timestamp before the tail started, is not sent live (it is reachable by a normal range query instead). History (rows before the tail start) is served by Loki's `Tailer` history path in both stores, not by the live client.
+- **Pending deletes on the live tail:** Loki attaches the tenant's pending delete requests to the tail's *history* read only; its live path streams unfiltered from the ingesters, so a line covered by a pending delete can still arrive live. Rúnakefli's live polls run through the same select path as queries, which resolves the tenant's pending delete requests for every poll window and hides matching lines: the tail never delivers a line that a same-range query hides (strictly more filtering than Loki, without whom the line would arrive live until the delete is processed). The price is that a failed delete-requests fetch ends the poll — and with it the tail — with an error, where Loki logs it and keeps streaming.
 
 ## Index statistics and volume (`index/stats`, `index/volume`, `index/volume_range`)
 
@@ -51,6 +52,7 @@ reason. Entries are grouped by topic.
 
 - **Request IDs:** Rúnakefli uses 8 random hex characters; the format and the IDs differ from Loki.
 - **Rows written between delete submission and processing:** the processor re-resolves the request's selector at processing time, so rows that land inside the request's `[start, end]` window *after* the request was created are also deleted. They were not hidden by the query-time filter before they existed, so this is a (narrow, intentional) difference from "exactly the rows query-time filtering hid"; it matches Loki's compactor, which also re-reads the index when processing.
+- **Failed delete-requests fetch:** when the tenant's delete requests cannot be read, Loki's querier logs the error and serves the query unfiltered (`failed loading deletes for user`). Rúnakefli fails the request instead: a query, a pushdown or a tail poll that cannot read its delete requests never shows lines it would otherwise have hidden (its tail ends with an error; Loki keeps streaming).
 
 ## Ruler
 
