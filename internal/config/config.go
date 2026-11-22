@@ -18,6 +18,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/drone/envsubst"
 	dskitlog "github.com/grafana/dskit/log"
+	"github.com/grafana/loki/v3/pkg/loghttp/push"
 	lokiruler "github.com/grafana/loki/v3/pkg/ruler"
 	"github.com/grafana/loki/v3/pkg/ruler/rulestore"
 	"github.com/grafana/loki/v3/pkg/validation"
@@ -95,6 +96,13 @@ var PushdownModes = map[string]bool{"on": true, "off": true, "downstream": true}
 func Load(path string, expandEnv bool) (*Config, error) {
 	var defaults validation.Limits
 	defaults.RegisterFlags(flag.NewFlagSet("defaults", flag.PanicOnError))
+	// Loki applies its distributor's OTLP defaults to the limits at startup
+	// (cmd/loki/main.go), which makes service.name and the other default
+	// resource attributes stream labels. Without it an OTLP stream from a real
+	// exporter has no labels and is rejected.
+	var otlpDefaults push.GlobalOTLPConfig
+	otlpDefaults.RegisterFlags(flag.NewFlagSet("defaults", flag.PanicOnError))
+	defaults.SetGlobalOTLPConfig(otlpDefaults)
 	validation.SetDefaultLimitsForYAMLUnmarshalling(defaults)
 
 	c := &Config{AuthEnabled: true}

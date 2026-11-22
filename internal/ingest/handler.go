@@ -60,7 +60,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if decompSize == 0 {
 		decompSize = maxDecompressedSize
 	}
-	req, err := parsePush(r, h.Logger, tenantID, h.Limits, parser, format, recvSize, decompSize)
+	// One resolver per request, so every stream of the push sees the same
+	// retention and policy snapshot, as in Loki's distributor.
+	resolver := newStreamResolver(tenantID, h.Limits, h.Logger)
+	req, err := parsePush(r, h.Logger, tenantID, h.Limits, parser, format, recvSize, decompSize, resolver)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
