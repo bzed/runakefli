@@ -79,6 +79,19 @@ gpg --list-keys --with-fingerprint   # update the fingerprint in docs/install/in
 
 Users must fetch the new public key, so rotate rarely.
 
+**Whoever can push a `v*` tag can run scripts with the signing key.** In a
+release run of `docs.yml` (a `v*` tag push), the `build` and `apt` jobs check
+out the tagged commit — neither checkout pins a `ref:` — and the `apt` job
+imports `APT_GPG_PRIVATE_KEY` *before* running `scripts/build-apt-repo.sh`
+and `scripts/fetch-published-debs.sh` (and the build job's `pip install`)
+from that checkout. No environment gate protects the `apt` job (the `deploy`
+job's `github-pages` environment allows `v*` tags by design), and nothing
+hash-pins the scripts. A `v*` tag pointing at anything but reviewed `main`
+therefore hands the archive signing key — and the S3 credentials — to
+possibly stale or unreviewed scripts (#44). Restrict `v*` tag pushes
+accordingly (Settings → Tags → tag protection rules) and only ever tag a
+commit that `main` has already passed.
+
 ## Container image
 
 `Dockerfile` is a multi-stage build (Go toolchain on the build platform,
