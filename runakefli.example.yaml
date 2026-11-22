@@ -76,8 +76,8 @@ query:
 #   delete_request_cancel_period: 24h     # a delete request can be cancelled for this long
 #   delete_max_interval: 24h
 
-# Bound the uncompressed bytes of pushes being decoded at once. A push that
-# would exceed the budget is refused with 503 before its body is read. 0
+# Bound the bytes of pushes being decoded at once. While the pushes in flight
+# hold the budget, a new push is refused with 503 before its body is read. 0
 # (Loki's default) disables the bound; size the process memory limit above it
 # (see docs/operations.md).
 distributor:

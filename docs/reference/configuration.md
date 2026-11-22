@@ -253,7 +253,7 @@ in Loki.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `distributor.max_inflight_bytes` | int | `0` (disabled) | Maximum bytes of push bodies held in flight at once (Loki's key and semantics); `0` disables the cap. A push over the budget is refused with `503` and Loki's `the server cannot accept more requests at this time` *before its body is read*. Rúnakefli also charges the received `Content-Length` at admission, so a concurrent push cannot slip in while the first is still decompressing. Size the process memory limit above this value ([Operations → Memory](../operations.md#memory)). |
+| `distributor.max_inflight_bytes` | int | `0` (disabled) | Maximum bytes of push bodies held in flight at once (Loki's key and semantics); `0` disables the cap. While the pushes in flight hold the whole budget, a new push is refused with `503` and Loki's `the server cannot accept more requests at this time` *before its body is read*. Rúnakefli also charges the received `Content-Length` at admission, so a concurrent push cannot slip in while the first is still decompressing. Size the process memory limit above this value ([Operations → Memory](../operations.md#memory)). |
 
 ```yaml
 distributor:
