@@ -27,6 +27,7 @@ import (
 	"github.com/bzed/runakefli/internal/chstore/chtest"
 	"github.com/bzed/runakefli/internal/deletes"
 	"github.com/bzed/runakefli/internal/ingest"
+	"github.com/bzed/runakefli/internal/multitenant"
 	"github.com/bzed/runakefli/internal/patterns"
 )
 
@@ -40,6 +41,17 @@ func newServerConn(t *testing.T, auth bool) (*httptest.Server, driver.Conn) {
 }
 
 func newServerConnWithLimits(t *testing.T, auth bool, mutate func(*validation.Limits)) (*httptest.Server, driver.Conn) {
+	return newServerOpts(t, auth, false, mutate)
+}
+
+// newMultiTenantServerConn is newServerConn with multi-tenant queries on: log
+// and metric queries and the metadata endpoints fan out per tenant in
+// X-Scope-OrgID (query.querier.multi_tenant_queries_enabled).
+func newMultiTenantServerConn(t *testing.T, auth bool) (*httptest.Server, driver.Conn) {
+	return newServerOpts(t, auth, true, nil)
+}
+
+func newServerOpts(t *testing.T, auth, multi bool, mutate func(*validation.Limits)) (*httptest.Server, driver.Conn) {
 	conn, _ := chtest.New(t)
 	var l validation.Limits
 	l.RegisterFlags(flag.NewFlagSet("t", flag.PanicOnError))
@@ -50,14 +62,25 @@ func newServerConnWithLimits(t *testing.T, auth bool, mutate func(*validation.Li
 	require.NoError(t, err)
 	store := &deletes.Store{Conn: conn}
 	q := &chstore.Querier{Conn: conn, Deletes: store}
+	var queries api.Querier
+	var meta api.MetaQuerier
+	if multi {
+		mq := &multitenant.Querier{Next: q}
+		queries = api.NewPlainQuerier(logql.NewEngine(logql.EngineOpts{}, mq, o, log.NewNopLogger()))
+		meta = mq
+	} else {
+		queries = api.NewPlainQuerier(logql.NewEngine(logql.EngineOpts{}, q, o, log.NewNopLogger()))
+	}
 	a := &api.API{
-		Queries:     api.NewPlainQuerier(logql.NewEngine(logql.EngineOpts{}, q, o, log.NewNopLogger())),
+		Queries:     queries,
 		Q:           q,
+		Meta:        meta,
 		Push:        &ingest.Handler{Writer: &chstore.Writer{Conn: conn}, Limits: o, Logger: log.NewNopLogger()},
 		Limits:      o,
 		Patterns:    &patterns.Querier{Q: q, Limits: o},
 		Deletes:     &deletes.Handler{Store: store, Limits: o, MaxInterval: time.Hour, CancelPeriod: time.Hour},
 		AuthEnabled: auth,
+		MultiTenant: multi,
 	}
 	srv := httptest.NewServer(a.Router())
 	t.Cleanup(srv.Close)
@@ -116,6 +139,93 @@ func TestAPI_LabelsAndReady(t *testing.T) {
 	code, body := do(t, "GET", srv.URL+"/loki/api/v1/labels", "", "")
 	require.Equal(t, http.StatusOK, code)
 	require.JSONEq(t, `{"status":"success"}`, onlyStatus(body))
+}
+
+// tenantsIn returns the tenants stored in ClickHouse, sorted.
+func tenantsIn(t *testing.T, conn driver.Conn) []string {
+	t.Helper()
+	rows, err := conn.Query(context.Background(), "SELECT DISTINCT tenant FROM logs ORDER BY tenant")
+	require.NoError(t, err)
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var tenant string
+		require.NoError(t, rows.Scan(&tenant))
+		out = append(out, tenant)
+	}
+	require.NoError(t, rows.Err())
+	return out
+}
+
+// rangeQuery runs a range query for the given header and returns the response
+// body. The window is the same one pushOne uses.
+func rangeQuery(t *testing.T, base, tenant, query string, now time.Time) (int, string) {
+	t.Helper()
+	qs := url.Values{
+		"query": {query},
+		"start": {strconv.FormatInt(now.Add(-time.Minute).UnixNano(), 10)},
+		"end":   {strconv.FormatInt(now.Add(time.Minute).UnixNano(), 10)},
+	}
+	return do(t, http.MethodGet, base+"/loki/api/v1/query_range?"+qs.Encode(), tenant, "")
+}
+
+// TestAPI_AuthDisabledIgnoresOrgIDHeader is the regression test for #37: with
+// auth disabled the tenant wrapper must never read the client-supplied
+// X-Scope-OrgID. It injects Loki's no-auth tenant "fake" instead, so a header
+// names neither the tenant a push lands in nor the tenants a query reads.
+func TestAPI_AuthDisabledIgnoresOrgIDHeader(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		multi  bool
+		header string
+	}{
+		{"no header", false, ""},
+		{"victim", false, "victim"},
+		{"multi-tenant", true, "a|b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, conn := newServerOpts(t, false, tc.multi, nil)
+			now := time.Now()
+			pushOne(t, srv.URL, tc.header, now)
+			require.Equal(t, []string{"fake"}, tenantsIn(t, conn),
+				"the header must not select the tenant a push lands in")
+
+			code, body := rangeQuery(t, srv.URL, tc.header, `{app="a"}`, now)
+			require.Equal(t, http.StatusOK, code, body)
+			require.Contains(t, body, "hello", "the header must not select the tenant a query reads")
+			require.NotContains(t, body, "__tenant_id__",
+				"the header must not fan a query out over several tenants")
+		})
+	}
+}
+
+// TestAPI_AuthEnabledHonoursOrgIDHeader pins the other half: with auth enabled
+// the header is required and selects the tenant, including several tenants
+// with multi-tenant queries on.
+func TestAPI_AuthEnabledHonoursOrgIDHeader(t *testing.T) {
+	srv, conn := newMultiTenantServerConn(t, true)
+
+	code, body := do(t, http.MethodGet, srv.URL+"/loki/api/v1/labels", "", "")
+	require.Equal(t, http.StatusUnauthorized, code)
+	require.Contains(t, body, "no org id")
+
+	now := time.Now()
+	pushOne(t, srv.URL, "t1", now)
+	require.Equal(t, []string{"t1"}, tenantsIn(t, conn))
+
+	code, body = rangeQuery(t, srv.URL, "t1", `{app="a"}`, now)
+	require.Equal(t, http.StatusOK, code, body)
+	require.Contains(t, body, "hello")
+	require.NotContains(t, body, "__tenant_id__", "a single tenant is not relabelled")
+
+	pushOne(t, srv.URL, "a", now)
+	pushOne(t, srv.URL, "b", now)
+	require.Equal(t, []string{"a", "b", "t1"}, tenantsIn(t, conn))
+
+	code, body = rangeQuery(t, srv.URL, "a|b", `{app="a"}`, now)
+	require.Equal(t, http.StatusOK, code, body)
+	require.Contains(t, body, `"__tenant_id__":"a"`, body)
+	require.Contains(t, body, `"__tenant_id__":"b"`, body)
 }
 
 func onlyStatus(b string) string {

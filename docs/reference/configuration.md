@@ -50,7 +50,7 @@ HTTP server settings.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `auth_enabled` | bool | `true` | When `true` (the default), every API endpoint except `/ready` and `format_query` requires the `X-Scope-OrgID` header. When `false`, no tenancy is enforced and the header is ignored. |
+| `auth_enabled` | bool | `true` | When `true` (the default), every API endpoint except `/ready` and `format_query` requires the `X-Scope-OrgID` header. When `false`, the header is ignored and every request runs as tenant `fake`, as in Loki. |
 
 > Note: the default is `true` (tenancy on), matching Loki's single-binary
 > default. The [example config](https://github.com/bzed/runakefli/blob/main/runakefli.example.yaml)

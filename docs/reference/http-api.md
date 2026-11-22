@@ -18,7 +18,8 @@ are the legacy Prometheus-compatible paths Loki also serves.
 
 When `auth_enabled` is `true` (the default), every endpoint **except**
 `/ready` and `/loki/api/v1/format_query` requires the `X-Scope-OrgID`
-header. When `auth_enabled` is `false`, no tenancy is enforced.
+header. When `auth_enabled` is `false`, the header is ignored: every request
+runs as tenant `fake`, as in Loki, so a client cannot select a tenant.
 
 ## Push
 

@@ -11,7 +11,7 @@
 # 1h, 7d, 1w); sizes take 256KB, 4MB, 2GB.
 
 # true: clients must send X-Scope-OrgID (Loki's default). false: one tenant,
-# the header is ignored.
+# "fake"; the header is ignored.
 auth_enabled: false
 
 server:

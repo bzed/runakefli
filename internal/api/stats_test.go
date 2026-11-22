@@ -56,6 +56,8 @@ func TestQueryStats_ReportsClickHouseWork(t *testing.T) {
 				},
 				Push:   &ingest.Handler{Writer: &chstore.Writer{Conn: conn}, Limits: limits, Logger: logger},
 				Limits: limits,
+				// These tests address tenant "t1": auth must read the header.
+				AuthEnabled: true,
 			}).Router())
 			defer srv.Close()
 
@@ -114,6 +116,8 @@ func TestQueryStats_LogQueryCountsPostFilterLines(t *testing.T) {
 		Queries: api.NewPlainQuerier(logql.NewEngine(logql.EngineOpts{}, q, limits, logger)),
 		Push:    &ingest.Handler{Writer: &chstore.Writer{Conn: conn}, Limits: limits, Logger: logger},
 		Limits:  limits,
+		// This test addresses tenant "t1": auth must read the header.
+		AuthEnabled: true,
 	}).Router())
 	defer srv.Close()
 

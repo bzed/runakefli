@@ -7,7 +7,8 @@ description: Run Rúnakefli in production: per-tenant limits, health checks, del
 ## Limits
 
 Rúnakefli enforces Loki®'s `limits_config` keys at the points below. A tenant is
-the value of the `X-Scope-OrgID` header.
+the value of the `X-Scope-OrgID` header, or `fake` when `auth_enabled` is
+`false` (the header is then ignored).
 
 ### Ingestion
 

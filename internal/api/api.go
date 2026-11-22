@@ -153,15 +153,24 @@ func (a *API) Router() http.Handler {
 	return instrument(mux, mux)
 }
 
+// noAuthTenant is the tenant every request runs as while auth is disabled,
+// matching Loki's NoAuthTenant default (pkg/util/fakeauth).
+const noAuthTenant = "fake"
+
+// tenant injects the request's tenant. With auth disabled it never reads the
+// client-supplied header: like Loki's fakeauth middleware, it injects the
+// no-auth tenant, so no client can select a tenant. With auth enabled the
+// header is required.
 func (a *API) tenant(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !a.AuthEnabled {
+			next.ServeHTTP(w, r.WithContext(user.InjectOrgID(r.Context(), noAuthTenant)))
+			return
+		}
 		id := r.Header.Get("X-Scope-OrgID")
 		if id == "" {
-			if a.AuthEnabled {
-				http.Error(w, "no org id", http.StatusUnauthorized)
-				return
-			}
-			id = "fake"
+			http.Error(w, "no org id", http.StatusUnauthorized)
+			return
 		}
 		next.ServeHTTP(w, r.WithContext(user.InjectOrgID(r.Context(), id)))
 	})
