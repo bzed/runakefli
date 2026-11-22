@@ -88,6 +88,12 @@ For production, prefer `clickhouse.password_file` (or systemd credentials) over 
 plain `clickhouse.password:` in the config file, so the secret is not in a world-readable
 file.
 
+These protect the secret *at rest* only. The connection to ClickHouse is plain
+TCP — there is no TLS option yet — so the password and all log data cross the
+network unencrypted once the connection leaves loopback (see the
+[divergences](https://runakefli.app/divergences/#storage-transport)); wiring
+TLS is on the [roadmap](https://runakefli.app/roadmap/).
+
 The container image's built-in config maps `RUNAKEFLI_CLICKHOUSE_PASSWORD` to
 `clickhouse.password` and `RUNAKEFLI_CLICKHOUSE_PASSWORD_FILE` to
 `clickhouse.password_file`; see

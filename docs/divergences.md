@@ -16,6 +16,10 @@ reason. Entries are grouped by topic.
 - **`format` label of the discard metrics:** Loki sets `format` (`loki` or `otlp`) on `loki_discarded_samples_total` and `loki_discarded_bytes_total`; Rúnakefli leaves it empty.
 - **Pushes spanning many days:** Loki accepts a push of any time span that passes its per-entry checks. Rúnakefli rejects a push touching more than 60 UTC days with 400 (`too many partitions: … split it by time range`), stores nothing from it, and counts it under the discard reason `too_many_partitions`. Each day becomes a separate ClickHouse® part, and ClickHouse refuses inserts over 100 partitions. Pushes over 8 days are inserted synchronously instead of through the shared async-insert buffer, so a backfill cannot fail other tenants' pushes. Backfills must send at most 60 days per push.
 
+## Storage transport
+
+- **Cleartext-only ClickHouse connection:** the native ClickHouse® protocol connection is plain TCP with no TLS option: there is no `clickhouse.tls` key (the strict decoder rejects unknown blocks at startup), so `clickhouse.password` — or the contents of `clickhouse.password_file` — crosses the network unencrypted in the first handshake packet, together with log data, label values and tenant names. A TLS-only endpoint (ClickHouse Cloud's native port 9440, or a server enforcing native TLS) cannot be reached at all. Keep the server on loopback or an otherwise trusted network: the default `clickhouse.addr` is `localhost:9000` and the packaged examples stay on it, but the container image's built-in config points at `clickhouse:9000` on the container network — that hop must be trusted too. Wiring TLS into `clickhouse.*` is on the [roadmap](https://runakefli.app/roadmap/).
+
 ## Query
 
 - **Tie order inside one stream and timestamp:** Loki keeps insertion order; Rúnakefli cannot. The oracle compares such groups as multisets.
