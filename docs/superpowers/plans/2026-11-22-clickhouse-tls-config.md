@@ -4,7 +4,7 @@
 
 **Goal:** Give the ClickHouse connection a `clickhouse.tls` block (enabled, ca_file, cert_file, key_file, server_name, insecure_skip_verify) that wires an `*tls.Config` into every connection Rúnakefli opens, warns at startup when the transport would cross a non-loopback network in cleartext, and lets the test helpers select a TLS server (prerequisite for ClickHouse Cloud verification).
 
-**Architecture:** Rúnakefli builds one pooled `clickhouse.Options` through `Config.CHOptions(db)` (`internal/config/config.go:212-223`) — the pooled ingest/query connection, the `-schema.migrate` admin connection, and every test helper all derive from it, so setting `Options.TLS` there covers everything. The clickhouse-go driver (v2.49.0) starts TLS when `opt.TLS != nil` (`tls.DialWithDialer`, `conn.go:34-42`); with an empty `ServerName` it verifies each address's own host, which is what a multi-node cluster needs. Material (CA, client keypair) is loaded and validated at config-load time, fail-fast like `clickhouse.password_file` (`config.go:154-168`); the resulting `*tls.Config` is cached in an unexported `Config` field. `chtest.Options` gains env-driven TLS so the oracle can later run against ClickHouse Cloud's native TLS port 9440 (roadmap).
+**Architecture:** Rúnakefli builds every production `clickhouse.Options` through `Config.CHOptions(db)` (`internal/config/config.go:211-223`) — the startup admin connection and the pooled ingest/query connection (`internal/server/server.go:196-209`, `openClickHouse`) and the `-schema.migrate` admin connection (`server.go:216-227`) all derive from it, so setting `Options.TLS` there covers production. The test helpers do **not** use `CHOptions`: `chtest.Options` (`internal/chstore/chtest/chtest.go:33-44`, used by `New`, `NewV1`, `NewV2` and `test/oracle/runakefli.go:70`) builds its own literal, which is why Task 3 exists. The clickhouse-go driver (v2.49.0) starts TLS when `opt.TLS != nil` (`tls.DialWithDialer`, `conn.go:36-37` in the module cache); with an empty `ServerName` it verifies each address's own host, which is what a multi-node cluster needs. Material (CA, client keypair) is loaded and validated at config-load time, fail-fast like `clickhouse.password_file` (`loadPasswordFile`, `config.go:154-168`, called from `Load` at `:131`); the resulting `*tls.Config` is cached in an unexported `Config` field. `chtest.Options` gains env-driven TLS so the oracle can later run against ClickHouse Cloud's native TLS port 9440 (roadmap).
 
 **Tech Stack:** Go stdlib only (`crypto/tls`, `crypto/x509`, `encoding/pem`, `crypto/ecdsa` for test fixtures). No new third-party dependencies.
 
@@ -14,17 +14,18 @@
 
 From `AGENTS.md` (read it before starting):
 
-- `make check` must pass before push; unit tests need a ClickHouse at `localhost:9000` (if not serving: `podman run -d -p 9000:9000 -e CLICKHOUSE_SKIP_USER_SETUP=1 docker.io/clickhouse/clickhouse-server:26.9`). Tasks 1-2 of this plan do NOT need it (pure config tests); run the config tests without the cluster if it is unavailable.
+- `make check` must pass before push; unit tests need a ClickHouse at `localhost:9000` (if not serving: `podman run -d -p 9000:9000 -e CLICKHOUSE_SKIP_USER_SETUP=1 docker.io/clickhouse/clickhouse-server:26.9`). Tasks 1-3 of this plan do NOT need it for their own tests (config parsing, a log helper, env parsing); `make check` as a whole does.
 - No new third-party dependencies (stdlib `crypto/*` only).
 - Conventional commits, one logical change per commit; every commit leaves tests green.
 - The strict decoder (`dec.KnownFields(true)`, `config.go:126-127`) is why the new keys must be added to the `Config` struct, not just to docs.
 - Docs key tests are enforced by tests, not convention: `TestConfigurationDocsCoverEveryKey` (each dotted key must appear in backticks in `docs/reference/configuration.md`), `TestExampleShowsEveryKey` and `TestExampleWithEveryOptionUncommented` (each key in `runakefli.example.yaml`, active or commented; the all-uncommented variant must load and validate). Task 1 satisfies them in the same commit that adds the keys.
 - Files are created `0o600` unless wider modes are required; secrets never in logs/errors (the new code logs no key material).
-- Every user-visible change carries a `CHANGELOG.md` line under `## [Unreleased]` (Task 4); the divergence entry is updated in the same task.
+- Every user-visible change carries a `CHANGELOG.md` line under `## [Unreleased]` **in the same commit**, and every observable change to a divergence updates `docs/divergences.md` in the same commit (AGENTS.md). Tasks 1 and 2 therefore carry their own CHANGELOG and divergence edits; Task 4 only touches the roadmap.
+- gosec runs on non-test files (`.golangci.yml` excludes it only for `_test.go` and `test/`): every `os.ReadFile` of a configured or env-supplied path needs `//nolint:gosec // G304: <reason>` like `loadPasswordFile` has (`config.go:162`); `level.X(logger).Log(...)` calls carry `//nolint:gosec // G104: logger Log error is not actionable (as in Loki)` like the rest of `internal/server`. (Verified during plan review with `golangci-lint`: G304 fires on both new `ReadFile`s; the `InsecureSkipVerify` G402 directive is used, so nolintlint accepts it; gosec does not demand `MinVersion` — Go's default minimum is TLS 1.2.)
 
 ## Review Focus
 
-1. **All connection sites inherit TLS**: the pooled connection (`internal/server/server.go` `openClickHouse`, ~`:196-208`), the `-schema.migrate` admin connection (`server.go:216-227`) and the chtest helpers all call `CHOptions` — Task 1's CHOptions test covers them all by covering the one builder. Do not add `TLS` anywhere else.
+1. **All production connection sites inherit TLS**: the admin + pooled connections (`internal/server/server.go` `openClickHouse`, `:196-209`) and the `-schema.migrate` admin connection (`server.go:216-227`) all call `CHOptions` — Task 1's CHOptions tests cover them by covering the one builder. Do not add `TLS` anywhere else in production code. The test helpers (`chtest.Options`) are separate and get their own env switch in Task 3.
 2. **Startup fail-fast on bad material**: missing/unparseable `ca_file`, missing `cert_file`/`key_file` must fail at `config.Load`, with errors that name the file — exactly like `password_file` does; `cert_file` without `key_file` (and vice versa) is rejected even when TLS is disabled, but file *contents* are only read when enabled.
 3. **Multi-address semantics**: leave `server_name` empty and `tls.DialWithDialer` verifies each `clickhouse.addr` host against that host's own name; a non-empty `server_name` applies to *all* addresses — document that in the configuration reference and do not "fix" it per address (the driver has no per-addr TLS hook).
 4. **`chtest.Options` cannot return an error** (its signature is used in ~10 call sites): an unreadable/invalid `RUNAKEFLI_TEST_CH_TLS_CA` panics with a message naming the env var — acceptable for a test helper (programmer error at test start), and the only place panic is allowed in this plan.
@@ -35,10 +36,12 @@ From `AGENTS.md` (read it before starting):
 ### Task 1: the `clickhouse.tls` block, from YAML to `Options.TLS`
 
 **Files:**
-- Modify: `internal/config/config.go` — `Config.ClickHouse` struct (`:43-58`), a new `loadTLS` call in `Load` next to `loadPasswordFile` (`:154-168`), validation next to `validateClickHouseClient` (`:191-209`), `CHOptions` (`:211-223`)
+- Modify: `internal/config/config.go` — imports (`crypto/tls`, `crypto/x509`), `Config.ClickHouse` struct (`:43-58`), a new `loadTLS` method called from `Load` right **after** `validateClickHouseClient` (`:134-136`) so the structural cert/key error wins over file errors, validation in `validateClickHouseClient` (`:194-209`), `CHOptions` (`:211-223`)
 - Test: `internal/config/config_test.go`
 - Modify: `runakefli.example.yaml` (commented `clickhouse.tls` block)
-- Modify: `docs/reference/configuration.md` (six key rows in the `clickhouse` table + a short "TLS" subsection after "Password handling")
+- Modify: `docs/reference/configuration.md` (seven key rows in the `clickhouse` table — `clickhouse.tls` plus its six children — a rewrite of the "there is no TLS option yet" paragraph in "Password handling" (`:91-95`), and a short "TLS" subsection after "Password handling")
+- Modify: `docs/divergences.md` — the "Storage transport" entry (`:19-21`)
+- Modify: `CHANGELOG.md` — `## [Unreleased]`
 
 **Interfaces:**
 - Consumes: `CHOptions(db string) *clickhouse.Options` as is.
@@ -46,7 +49,7 @@ From `AGENTS.md` (read it before starting):
 
 - [ ] **Step 1: Write the failing tests**
 
-In `internal/config/config_test.go`, add (adjust import list; the cert helper uses stdlib only):
+In `internal/config/config_test.go` (package `config`, internal test — `Load` and `Config` are unqualified; it currently imports `os`, `path/filepath`, `testing`, `time` and testify), add the imports `crypto/ecdsa`, `crypto/elliptic`, `crypto/rand`, `crypto/x509`, `crypto/x509/pkix`, `encoding/pem`, `fmt`, `math/big` (check which are already there), and:
 
 ```go
 // writeTLSCerts writes a self-signed certificate/key pair (valid for
@@ -78,10 +81,8 @@ func writeTLSCerts(t *testing.T, dir string) (certPath, keyPath, caPath string) 
 ```
 
 ```go
-// loadCH loads a ClickHouse-only config from YAML. If a minimal YAML like the
-// ones below is rejected by Load, copy the minimal-config pattern from the
-// neighbouring tests in config_test.go instead - the point is loading only the
-// clickhouse block.
+// loadCH loads a config from YAML (the package's other tests write a
+// t.TempDir() file and call Load the same way).
 func loadCH(t *testing.T, ch string) (*Config, error) {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "runakefli.yaml")
@@ -119,7 +120,7 @@ func TestClickHouseTLSFull(t *testing.T) {
 }
 
 func TestClickHouseTLSErrors(t *testing.T) {
-	certPath, keyPath, _ := writeTLSCerts(t, t.TempDir())
+	certPath, _, _ := writeTLSCerts(t, t.TempDir()) // keyPath unused here: Go rejects an unused variable
 
 	// cert_file and key_file must be set together — even when TLS is disabled.
 	_, err := loadCH(t, fmt.Sprintf("clickhouse:\n  tls:\n    cert_file: %q\n", certPath))
@@ -146,7 +147,7 @@ func TestClickHouseTLSErrors(t *testing.T) {
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `go test ./internal/config/ -run 'TestClickHouseTLS' -count=1`
-Expected: FAIL — compile error (unknown field `TLS`) or Load rejecting `clickhouse.tls` as an unknown key (`field tls not found` — the strict decoder proves the key really is new).
+Expected: FAIL — `clickhouse.Options` already has a `TLS` field, so the tests compile; every test that writes a `tls:` block fails at Load with `field tls not found` (the strict decoder proves the key really is new). `TestClickHouseTLSDisabled` already passes — it pins today's default.
 
 - [ ] **Step 3: Implement the config block, loading and validation**
 
@@ -179,7 +180,7 @@ In `internal/config/config.go`:
 	}
 ```
 
-4. `loadTLS` — called from `Load` next to wherever `loadPasswordFile` runs. When `!c.ClickHouse.TLS.Enabled`, return nil without reading anything. When enabled:
+4. `func (c *Config) loadTLS() error` — called from `Load` immediately after the `validateClickHouseClient` call (`config.go:134-136`), with the same `if err := …; err != nil { return nil, err }` shape. When `!c.ClickHouse.TLS.Enabled`, return nil without reading anything. When enabled:
 
 ```go
 	c.chTLS = &tls.Config{
@@ -187,7 +188,7 @@ In `internal/config/config.go`:
 		InsecureSkipVerify: c.ClickHouse.TLS.InsecureSkipVerify, //nolint:gosec // G402: the operator explicitly opted into skipping verification
 	}
 	if ca := c.ClickHouse.TLS.CAFile; ca != "" {
-		b, err := os.ReadFile(ca)
+		b, err := os.ReadFile(ca) //nolint:gosec // G304: path from the operator's config
 		if err != nil {
 			return fmt.Errorf("clickhouse: tls: read ca_file %s: %w", ca, err)
 		}
@@ -208,7 +209,7 @@ In `internal/config/config.go`:
 
 (The error strings are pinned: the tests assert `ca_file /no/such/ca.pem`, `no PEM certificate`, `cert_file and key_file must be set together` and `key_file /no/such/key.pem` with `require.ErrorContains`.)
 
-Check `Load`'s error wrapping convention against `loadPasswordFile` and match it; if files there are read with a helper that already wraps errors, reuse it.
+`loadPasswordFile` reads with a bare `os.ReadFile` and wraps as `clickhouse.password_file: %w`; there is no shared helper to reuse. The `clickhouse: tls: …` prefix matches `validateClickHouseClient`'s `clickhouse: …` messages.
 
 5. `CHOptions` — set the field:
 
@@ -218,35 +219,54 @@ Check `Load`'s error wrapping convention against `loadPasswordFile` and match it
 	}
 ```
 
-(with `o` being the returned literal's variable; keep `CHOptions`'s current structure).
+`CHOptions` currently `return`s the literal directly (`config.go:214-222`): assign it to `o := &clickhouse.Options{…}` first (fields unchanged), add the `if`, then `return o`.
 
 - [ ] **Step 4: Update the example config and the reference**
 
 In `runakefli.example.yaml`, inside the `clickhouse:` block (commented out, empty/false values so `TestExampleWithEveryOptionUncommented` stays valid — see Review Focus 5):
 
 ```yaml
-  # Native protocol over TLS: enabled wrap the connection in TLS; with no other
-  # key this uses the system root CAs and verifies each addr's host name.
-  #tls:
-  #  enabled: true
-  #  ca_file: ""
-  #  cert_file: ""
-  #  key_file: ""
-  #  server_name: ""
-  #  insecure_skip_verify: false
+  # Native protocol over TLS (e.g. port 9440). Enabled alone uses the system
+  # root CAs and verifies each addr's own host name.
+  # tls:
+  #   enabled: true
+  #   ca_file: ""                 # PEM CA bundle instead of the system roots
+  #   cert_file: ""               # client certificate for mutual TLS, with key_file
+  #   key_file: ""
+  #   server_name: ""             # verified name for all addrs; leave empty with a cluster
+  #   insecure_skip_verify: false # development only
 ```
 
-In `docs/reference/configuration.md`, add six rows to the `clickhouse` key table (after `max_idle_conns`) — descriptions: `tls.enabled` (default `false`; connect over TLS, e.g. port 9440 on TLS-enforced servers; bare enabled = system root CAs, per-address host verification), `tls.ca_file` (default `""`; PEM CA bundle replacing the system roots; read at startup, unreadable/empty = startup error), `tls.cert_file`/`tls.key_file` (client certificate for mutual TLS, only together; read at startup), `tls.server_name` (default `""`; overrides the verified name for **all** addresses — leave empty with a cluster), `tls.insecure_skip_verify` (default `false`; development only). Add a short "### TLS" subsection after "Password handling": three sentences — TLS off (default) means the password and every log line cross the network in cleartext; keep `clickhouse.addr` on loopback or enable TLS; reference the divergences page.
+Put it after the `max_idle_conns` line (`runakefli.example.yaml:44`), before the "Cluster:" comment, and keep the file's `  # key:` style (hash, space, key): `TestExampleWithEveryOptionUncommented` (`internal/config/example_test.go:40-75`) uncomments every line matching `^(\s*)# ?(\s*)([a-z_]+: …)` by deleting `# `, so this block becomes `  tls:` / `    enabled: true` / … — valid, because enabled with no files is a bare `&tls.Config{}`. The prose lines start with an upper-case word and stay comments.
+
+In `docs/reference/configuration.md`, add seven rows to the `clickhouse` key table (after the `clickhouse.max_idle_conns` row, `:78`). `TestConfigurationDocsCoverEveryKey` requires the **full dotted name in backticks** for the block and every child: `clickhouse.tls` (block, "see below") and `clickhouse.tls.enabled`, `clickhouse.tls.ca_file`, `clickhouse.tls.cert_file`, `clickhouse.tls.key_file`, `clickhouse.tls.server_name`, `clickhouse.tls.insecure_skip_verify` — a row named only `tls.enabled` fails the test. Descriptions: `tls.enabled` (default `false`; connect over TLS, e.g. port 9440 on TLS-enforced servers; bare enabled = system root CAs, per-address host verification), `tls.ca_file` (default `""`; PEM CA bundle replacing the system roots; read at startup, unreadable/empty = startup error), `tls.cert_file`/`tls.key_file` (client certificate for mutual TLS, only together; read at startup), `tls.server_name` (default `""`; overrides the verified name for **all** addresses — leave empty with a cluster), `tls.insecure_skip_verify` (default `false`; development only). Rewrite the paragraph in "Password handling" that says "The connection to ClickHouse is plain TCP — there is no TLS option yet …" (`:91-95`) so it says that without `clickhouse.tls.enabled` the connection is plain TCP and points to the new subsection, dropping the "on the roadmap" clause. Add a short "### TLS" subsection after "Password handling" (before "### ClickHouse user and grants", `:103`): three sentences — TLS off (default) means the password and every log line cross the network in cleartext; keep `clickhouse.addr` on loopback or enable TLS; reference the [divergences](https://runakefli.app/divergences/#storage-transport) page (same link style as the existing paragraph).
+
+- [ ] **Step 4b: Divergence and CHANGELOG (same commit, AGENTS.md)**
+
+In `docs/divergences.md`, replace the "**Cleartext-only ClickHouse connection:**" bullet (`:21`, under `## Storage transport`) with:
+
+```markdown
+- **ClickHouse transport is cleartext by default:** the native connection is plain TCP unless `clickhouse.tls.enabled` is set, so with the default configuration `clickhouse.password` — or the contents of `clickhouse.password_file` — crosses the network unencrypted in the first handshake packet, together with log data, label values and tenant names. Keep the server on loopback or an otherwise trusted network, or enable TLS: the default `clickhouse.addr` is `localhost:9000`, but the container image's built-in config points at `clickhouse:9000` on the container network — that hop must be trusted too. With `clickhouse.tls.enabled: true` the connection is TLS (`ca_file`, client `cert_file`/`key_file`, `server_name`, `insecure_skip_verify`; enabled alone = system root CAs, per-address host verification), which also reaches TLS-only endpoints such as ClickHouse Cloud's native port 9440.
+```
+
+In `CHANGELOG.md` under `## [Unreleased]`: add an `### Added` section above `### Changed` (Keep a Changelog order; none exists yet) with
+
+```markdown
+- `clickhouse.tls` (`enabled`, `ca_file`, `cert_file`, `key_file`, `server_name`, `insecure_skip_verify`): the native ClickHouse connection can now use TLS (e.g. native-TLS servers and ClickHouse Cloud's port 9440), with the material read and validated at startup like `password_file`. Until now the transport was cleartext-only (#45).
+```
+
+and delete the `### Changed` bullet that starts "New divergence recorded: the ClickHouse connection is cleartext-only" (`CHANGELOG.md:12`, #45) — it describes the pre-fix state; the divergence page stays the record.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `go test ./internal/config/ -count=1`
-Expected: PASS — the four new tests, `TestExampleShowsEveryKey`, `TestExampleWithEveryOptionUncommented`, `TestConfigurationDocsCoverEveryKey` and `TestLoad_UnknownKeyRejected` all green.
+Run `gofmt -w internal/config/config.go` first: adding `TLS` realigns the `ClickHouse` struct's field columns.
+Expected (verified during plan review with this plan's code applied): PASS — the four new tests, `TestExampleShowsEveryKey`, `TestExampleWithEveryOptionUncommented`, `TestConfigurationDocsCoverEveryKey` and `TestLoad_UnknownKeyRejected` all green. Then `make docs` (mkdocs `--strict`) and `golangci-lint run ./internal/config/`.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add internal/config/config.go internal/config/config_test.go runakefli.example.yaml docs/reference/configuration.md
+git add internal/config/config.go internal/config/config_test.go runakefli.example.yaml docs/reference/configuration.md docs/divergences.md CHANGELOG.md
 git commit -m "feat: clickhouse.tls config block wires TLS into the native protocol (#45)"
 ```
 
@@ -254,8 +274,9 @@ git commit -m "feat: clickhouse.tls config block wires TLS into the native proto
 
 **Files:**
 - Create: `internal/server/transport.go` — `warnCleartextTransport(logger log.Logger, cfg *config.Config)`
-- Modify: `internal/server/server.go` — call it first thing in `Run`
+- Modify: `internal/server/server.go` — call it in `Run` right after the logger is resolved (`:67-70`), before `openClickHouse` (`:71`)
 - Test: `internal/server/transport_test.go`
+- Modify: `docs/divergences.md`, `CHANGELOG.md` (one sentence each, Step 4b)
 
 **Interfaces:**
 - Consumes: `cfg.ClickHouse.TLS.Enabled` and `cfg.ClickHouse.Addr` (Task 1).
@@ -280,9 +301,7 @@ import (
 
 func newSwap() (log.Logger, *bytes.Buffer) {
 	var buf bytes.Buffer
-	sw := &log.SwapLogger{} // zero value discards; Swap installs the capture
-	sw.Swap(log.NewLogfmtLogger(&buf))
-	return sw, &buf
+	return log.NewLogfmtLogger(&buf), &buf
 }
 
 func TestWarnCleartextTransport(t *testing.T) {
@@ -291,7 +310,7 @@ func TestWarnCleartextTransport(t *testing.T) {
 	// No addr configured, then loopback (incl. empty-host) addresses: silent.
 	logger, out := newSwap()
 	warnCleartextTransport(logger, cfg)
-	cfg.ClickHouse.Addr = []string{"localhost:9000", "127.0.0.1:9000", ":9440"}
+	cfg.ClickHouse.Addr = []string{"localhost:9000", "127.0.0.1:9000", "127.0.0.2:9000", "[::1]:9000", ":9440"}
 	warnCleartextTransport(logger, cfg)
 	require.Empty(t, out.String())
 
@@ -317,7 +336,7 @@ Expected: FAIL — `warnCleartextTransport` undefined.
 
 - [ ] **Step 3: Implement**
 
-`internal/server/transport.go` (package `server`):
+`internal/server/transport.go` (package `server`; imports `net`, `github.com/go-kit/log`, `github.com/go-kit/log/level`, `github.com/bzed/runakefli/internal/config`):
 
 ```go
 // warnCleartextTransport warns once when the ClickHouse transport is not
@@ -334,27 +353,33 @@ func warnCleartextTransport(logger log.Logger, cfg *config.Config) {
 		if err != nil {
 			host = addr
 		}
-		switch host {
-		case "", "localhost", "127.0.0.1", "::1":
+		if host == "" || host == "localhost" {
 			continue
 		}
-		level.Warn(logger).Log("msg", "clickhouse transport is not encrypted: password and log data cross the network in cleartext; enable clickhouse.tls", "addr", addr)
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			continue
+		}
+		level.Warn(logger).Log("msg", "clickhouse transport is not encrypted: password and log data cross the network in cleartext; enable clickhouse.tls", "addr", addr) //nolint:gosec // G104: logger Log error is not actionable (as in Loki)
 		return
 	}
 }
 ```
 
-Call it at the very top of `Run` in `internal/server/server.go`, before any connection is opened (the warning must precede a possibly-long dial). Run has the logger available from its `Options` (read `Run`'s head; if the logger is resolved after other early calls, put the call right after the logger exists).
+Call it in `Run` (`internal/server/server.go:66`) right after the `logger := opts.Logger; if logger == nil {…}` block (`:67-70`) and before `openClickHouse` (`:71`), so the warning precedes a possibly-long dial. `MigrateSchema` (`:216`) is a one-shot admin command; leave it alone. Note: the container image's built-in config points at `clickhouse:9000`, so container deployments without TLS log this warning on every start — intended, and stated in the divergence entry.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `go test ./internal/server/ -run TestWarnCleartextTransport -count=1 && go build ./...`
-Expected: PASS and build clean.
+Run: `go test ./internal/server/ -run TestWarnCleartextTransport -count=1 && go build ./... && golangci-lint run ./internal/server/`
+Expected: PASS, build and lint clean.
+
+- [ ] **Step 4b: Divergence and CHANGELOG**
+
+Append to the divergence bullet written in Task 1 Step 4b: "Rúnakefli logs a warning at startup when TLS is off and any `clickhouse.addr` is not a loopback address (the container image's default `clickhouse:9000` included)." Append to the Task 1 `### Added` CHANGELOG line, before `(#45)`: "Rúnakefli also warns at startup when TLS is off and `clickhouse.addr` names a non-loopback address."
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add internal/server/transport.go internal/server/transport_test.go internal/server/server.go
+git add internal/server/transport.go internal/server/transport_test.go internal/server/server.go docs/divergences.md CHANGELOG.md
 git commit -m "feat: warn at startup on cleartext ClickHouse transport to non-loopback addresses (#45)"
 ```
 
@@ -362,11 +387,11 @@ git commit -m "feat: warn at startup on cleartext ClickHouse transport to non-lo
 
 **Files:**
 - Modify: `internal/chstore/chtest/chtest.go` — `Options` (`:33-44`)
-- Test: `internal/chstore/chtest/chtest_test.go` (create if absent)
+- Test: `internal/chstore/chtest/chtest_test.go` (does not exist yet: create it as `package chtest`, imports `testing`, `github.com/stretchr/testify/require`, plus what the CA case needs)
 
 **Interfaces:**
 - Consumes: nothing (clickhouse-go `Options.TLS` directly).
-- Produces: env contract `RUNAKEFLI_TEST_CH_TLS` (unset/empty/`0` = off, any other value = on with `&tls.Config{}` — system roots, per-addr host verification) and optional `RUNAKEFLI_TEST_CH_TLS_CA` (PEM file loaded into `RootCAs`; unreadable or invalid panics naming the env var — Review Focus 5).
+- Produces: env contract `RUNAKEFLI_TEST_CH_TLS` (unset/empty/`0` = off, any other value = on with `&tls.Config{}` — system roots, per-addr host verification) and optional `RUNAKEFLI_TEST_CH_TLS_CA` (PEM file loaded into `RootCAs`; unreadable or invalid panics naming the env var — Review Focus 4).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -400,11 +425,11 @@ Expected: FAIL — `Options(...).TLS` is nil on the "on" case.
 In `chtest.Options`, after building the literal, mirror the config semantics:
 
 ```go
-	o := &clickhouse.Options{ /* current fields unchanged */ }
+	o := &clickhouse.Options{ /* current fields (chtest.go:35-43) unchanged */ }
 	if tlsEnv := os.Getenv("RUNAKEFLI_TEST_CH_TLS"); tlsEnv != "" && tlsEnv != "0" {
 		tlsCfg := &tls.Config{}
 		if ca := os.Getenv("RUNAKEFLI_TEST_CH_TLS_CA"); ca != "" {
-			b, err := os.ReadFile(ca)
+			b, err := os.ReadFile(ca) //nolint:gosec // G304: path from the test operator's environment
 			if err != nil {
 				panic(fmt.Sprintf("RUNAKEFLI_TEST_CH_TLS_CA %s: %v", ca, err)) // test helper: programmer error at test start
 			}
@@ -419,12 +444,12 @@ In `chtest.Options`, after building the literal, mirror the config semantics:
 	return o
 ```
 
-Add the cursor line to the `Topology`/docs comment in chtest.go naming the new env vars so the next reader finds them.
+Add `crypto/tls` and `crypto/x509` to chtest.go's imports (`fmt` and `os` are already there), and extend `Options`' doc comment (`chtest.go:33`) with one sentence naming `RUNAKEFLI_TEST_CH_TLS` and `RUNAKEFLI_TEST_CH_TLS_CA` so the next reader finds them.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `go test ./internal/chstore/chtest/ -count=1`
-Expected: PASS (`NewV1`/`NewV2` reuse `Options`, so they inherit TLS with no changes — read them once to confirm).
+Expected: PASS (`New`, `NewV1` (`v1.go:45`) and `NewV2` (`v2.go:29`) all call `Options`, so they inherit TLS with no changes; so does the oracle, `test/oracle/runakefli.go:70`). Also run `golangci-lint run ./internal/chstore/chtest/` — gosec applies to `chtest.go`.
 
 - [ ] **Step 5: Commit**
 
@@ -433,46 +458,26 @@ git add internal/chstore/chtest/chtest.go internal/chstore/chtest/chtest_test.go
 git commit -m "test: chtest selects a TLS ClickHouse via RUNAKEFLI_TEST_CH_TLS (#45)"
 ```
 
-### Task 4: Divergences, roadmap, CHANGELOG
+### Task 4: Roadmap
 
 **Files:**
-- Modify: `docs/divergences.md` — the "Storage transport" section (added in `222e24a`)
-- Modify: `docs/roadmap.md` — the "ClickHouse® Cloud verification" bullet
-- Modify: `CHANGELOG.md` — `## [Unreleased]`
+- Modify: `docs/roadmap.md` — the "ClickHouse® Cloud verification" bullet (`:9-14`)
 
 **Interfaces:**
-- Consumes: Tasks 1-3 (their behaviour makes the new text true).
+- Consumes: Tasks 1-3 (the divergence and CHANGELOG were already updated in Tasks 1 and 2).
 - Produces: docs consistent with the shipped code.
 
-- [ ] **Step 1: Rewrite the divergence entry**
-
-Replace the "Cleartext-only ClickHouse connection" bullet with:
-
-```markdown
-- **ClickHouse transport is cleartext by default:** the native connection is plain TCP unless `clickhouse.tls.enabled` is set; there is no transport encryption on by default, so with the default configuration the password (also one read from `clickhouse.password_file`) crosses the network in cleartext in the first handshake packet, together with log data, label values and tenant names. Rúnakefli warns at startup when TLS is off and any `clickhouse.addr` is not loopback. With `clickhouse.tls.enabled: true` the connection is TLS (`ca_file`, client `cert_file`/`key_file`, `server_name`, `insecure_skip_verify` as usual; bare enabled = system root CAs, per-address host verification).
-```
-
-- [ ] **Step 2: Update the roadmap bullet**
+- [ ] **Step 1: Update the roadmap bullet**
 
 The "ClickHouse® Cloud verification" bullet currently says the TLS port "must be wired into `chtest.Options` and `clickhouse.*` config (a `tls` key)" — that wiring now exists. Rewrite so the bullet asks only for what remains: a Cloud account, and running unit suite + oracle against it with `RUNAKEFLI_TEST_CH_ADDR=<host>:9440 RUNAKEFLI_TEST_CH_TLS=1 RUNAKEFLI_TEST_CH_USER/PASSWORD=...`.
 
-- [ ] **Step 3: CHANGELOG**
-
-Under `## [Unreleased]`, add an `### Added` section (above `### Changed`, Keep a Changelog order) if it does not exist, then:
-
-```markdown
-- `clickhouse.tls` (`enabled`, `ca_file`, `cert_file`, `key_file`, `server_name`, `insecure_skip_verify`): the native ClickHouse connection can now use TLS (e.g. native-TLS servers and ClickHouse Cloud's port 9440), with the material read and validated at startup like `password_file`. Until now the transport was cleartext-only. Rúnakefli also warns at startup when TLS is off and `clickhouse.addr` names a non-loopback address (#45).
-```
-
-Also drop the `(45)`-tagged `### Changed` line added on 2026-11-21 that records the cleartext-only divergence *as a new entry* (it describes the pre-fix state that this release changes; keep the divergence page as the record).
-
-- [ ] **Step 4: Verify**
+- [ ] **Step 2: Verify**
 
 Run: `make docs` and `go test ./internal/config/ -count=1`
 Expected: both PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add docs/divergences.md docs/roadmap.md CHANGELOG.md
-git commit -m "docs: ClickHouse transport with the new clickhouse.tls block (#45)"
+git add docs/roadmap.md
+git commit -m "docs: roadmap: ClickHouse Cloud verification only needs an account (#45)"

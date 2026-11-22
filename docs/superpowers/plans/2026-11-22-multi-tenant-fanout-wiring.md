@@ -4,7 +4,7 @@
 
 **Goal:** Make `query.querier.multi_tenant_queries_enabled: true` fan out the index and drilldown endpoints (`index/stats`, `index/volume`, `index/volume_range`, `detected_labels`, `patterns`) per tenant, as the docs promise, by wiring the existing-but-never-set `api.API.MultiTenant` switch in `server.newAPI`.
 
-**Architecture:** All the fan-out code already exists and is unit-tested: `multitenant.Index` (`internal/multitenant/index.go`, one call per tenant, merged as Loki merges) wraps the per-tenant adapter `tenantIndex` (`internal/api/index.go`) when `api.API.MultiTenant` is true, and the codec handler routes the five endpoints through `api.API.index()` (`internal/api/lokicodec.go:22-49`). The only missing piece is production wiring: `server.newAPI` builds the fan-out querier for the engine and `Meta` (`internal/server/server.go:240-244`) but never sets `MultiTenant` on the `api.API` literal (`server.go:246-269`). This plan adds that one line, plus an end-to-end regression test through the real `server.Run` path — the existing unit tests never catch this class of bug because they self-wire the field (`internal/multitenant/querier_test.go:85` sets `MultiTenant: mt` on a hand-built API).
+**Architecture:** All the fan-out code already exists and is unit-tested: `multitenant.Index` (`internal/multitenant/index.go`, one call per tenant, merged as Loki merges) wraps the per-tenant adapter `tenantIndex` (`internal/api/index.go`) when `api.API.MultiTenant` is true, and the codec handler routes the five endpoints through `api.API.index()` (`internal/api/lokicodec.go:19-52`; `index()` itself is `internal/api/index.go:53-61`). The only missing piece is production wiring: `server.newAPI` (`internal/server/server.go:231`) builds the fan-out querier for the engine and `Meta` (`internal/server/server.go:240-244`) but never sets `MultiTenant` on the `api.API` literal (`server.go:246-269`). This plan adds that one line, plus an end-to-end regression test through the real `server.Run` path — the existing unit tests never catch this class of bug because they self-wire the field (`internal/multitenant/querier_test.go:85` sets `MultiTenant: mt` on a hand-built API).
 
 **Tech Stack:** Go, ClickHouse through `chtest` (a live server is required, see Global Constraints), end-to-end tests via `server.Run` + `net/http`.
 
@@ -25,11 +25,11 @@ From `AGENTS.md` (read it before starting):
 
 ## Review Focus
 
-1. `index/volume_range` needs no extra wiring: it is decoded to the same `*logproto.VolumeRequest` branch that `/index/volume` takes (`internal/api/lokicodec.go:27-32`), so the `Volume` fan-out (`internal/multitenant/index.go:59-66`) covers both endpoints. The e2e test therefore covers `/index/volume`, not `/index/volume_range`.
-2. Flag OFF must keep rejecting multi-tenant ids — `TestMultiTenant_IndexDisabledRejects` (`internal/multitenant/querier_test.go:209-215`) must keep passing; Task 2 strengthens it to pin the exact status code.
-3. The engine path (`query`, `query_range`, `series`, labels, `detected_fields`) must not change: `internal/pushdown/engine.go:86-94` already routes multi-tenant requests to Tier B. Run `go test ./internal/api/... ./internal/pushdown/... ./internal/server/... ./internal/multitenant/...` after the wiring.
+1. `index/volume_range` needs no extra wiring: it is decoded to the same `*logproto.VolumeRequest` branch that `/index/volume` takes (`internal/api/lokicodec.go:27-32`), so the `Volume` fan-out (`internal/multitenant/index.go:59-73`) covers both endpoints. The e2e test therefore asserts on `/index/volume` only; `/index/volume_range` was verified manually to answer 200 with the wiring in place.
+2. Flag OFF must keep rejecting multi-tenant ids — `TestMultiTenant_IndexDisabledRejects` (`internal/multitenant/querier_test.go:209-215`) must keep passing; Task 1 Step 6 strengthens it to pin the exact status code (verified: 500).
+3. The engine path (`query`, `query_range`, `series`, labels, `detected_fields`) must not change: `internal/pushdown/engine.go:85-94` already routes multi-tenant requests to Tier B. Run `go test ./internal/api/... ./internal/pushdown/... ./internal/server/... ./internal/multitenant/...` after the wiring.
 4. If the new e2e test is flaky because a just-pushed line is not yet visible to `index/stats` (async insert flushing), poll the first multi-tenant GET with `require.Eventually` (e.g. 10 s, 250 ms tick) instead of sleeping. For the red run, a plain assertion is clearer: it fails fast with the 500 body.
-5. `Patterns` and `Tail` keep the plain `*chstore.Querier` (`server.go:266`, `:271`): patterns fans out through `tenantIndex.Patterns` (`internal/api/index.go:49-51`) once `MultiTenant` is set; tail stays single-tenant (nothing ever promised tail fan-out). Do not retype those fields.
+5. `Patterns` (`*patterns.Querier{Q: q, …}`, `server.go:266`) and `Tail` (built over `lhtail.Ingester{Q: q}`, `server.go:271-277`) stay as they are: patterns fans out through `tenantIndex.Patterns` (`internal/api/index.go:49-51`) once `MultiTenant` is set; tail stays single-tenant (nothing ever promised tail fan-out). Do not retype those fields or change their wiring.
 
 ---
 
@@ -37,11 +37,11 @@ From `AGENTS.md` (read it before starting):
 
 **Files:**
 - Create: `internal/server/multitenant_fanout_test.go` (package `server_test`)
-- Modify: `internal/server/server.go` — the `api.API` literal in `newAPI`, lines 246-269
-- Modify: `internal/multitenant/querier_test.go` — the stale `newMTServer` comment (`:29-31`) and `TestMultiTenant_IndexDisabledRejects` (`:209-215`)
+- Modify: `internal/server/server.go` — the `api.API` literal in `newAPI` (func at line 231), lines 246-269
+- Modify: `internal/multitenant/querier_test.go` — the stale `newMTServer` comment (`:29-31`) and `TestMultiTenant_IndexDisabledRejects` (`:209-215`; it uses the file's `indexGet` helper, `:182-186`)
 
 **Interfaces:**
-- Consumes (all in `internal/server/server_test.go`): `testConfig(t *testing.T, serverYAML, extra string) *config.Config` (`:37`), `start(t *testing.T, cfg *config.Config, logger log.Logger) *running` (`:88`, `*running.addr` is `host:port`), `push(t *testing.T, addr, tenant, body string) int` (`:125`), `pushBody(ts time.Time, line string) string` (`:121`), `defaultServer` (`:33`).
+- Consumes (all in `internal/server/server_test.go`): `testConfig(t *testing.T, serverYAML, extra string) *config.Config` (`:37`), `start(t *testing.T, cfg *config.Config, logger log.Logger) *running` (`:88`, `*running.addr` is `host:port`), `push(t *testing.T, addr, tenant, body string) int` (`:125`), `pushBody(ts time.Time, line string) string` (`:121`), `defaultServer` (`:33`). The config written by `testConfig` already sets `auth_enabled: true`, so `X-Scope-OrgID` is honoured.
 - Produces: none (this is the last code task's dependency root; `server.newAPI` behaviour is the deliverable).
 
 - [ ] **Step 1: Write the failing test**
@@ -74,7 +74,8 @@ func TestRun_MultiTenantFanout(t *testing.T) {
 		v := url.Values{"query": {`{app="a"}`},
 			"start":  {fmt.Sprint(now.Add(-time.Hour).UnixNano())},
 			"end":    {fmt.Sprint(now.Add(time.Minute).UnixNano())}}
-		req, err := http.NewRequest(http.MethodGet, "http://"+r.addr+path+"?"+v.Encode(), nil)
+		// NewRequestWithContext: AGENTS.md requires it, and golangci-lint's noctx flags http.NewRequest.
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+r.addr+path+"?"+v.Encode(), nil)
 		require.NoError(t, err)
 		req.Header.Set("X-Scope-OrgID", tenant)
 		resp, err := http.DefaultClient.Do(req)
@@ -94,6 +95,12 @@ func TestRun_MultiTenantFanout(t *testing.T) {
 	require.Equal(t, http.StatusOK, code, body)
 	require.Contains(t, body, `"app":"a"`)
 
+	code, body = get("/loki/api/v1/detected_labels", "t1|t2")
+	require.Equal(t, http.StatusOK, code, body)
+	require.Contains(t, body, `"label":"app"`)
+
+	// No patterns are mined from two lines; the point is that the request is
+	// accepted (200, `{"status":"success","data":[]}`) instead of rejected.
 	code, body = get("/loki/api/v1/patterns", "t1|t2")
 	require.Equal(t, http.StatusOK, code, body)
 
@@ -107,7 +114,7 @@ func TestRun_MultiTenantFanout(t *testing.T) {
 - [ ] **Step 2: Run the test to verify it fails for the documented reason**
 
 Run: `go test ./internal/server/ -run TestRun_MultiTenantFanout -count=1 -v`
-Expected: FAIL on the first `index/stats` assertion — status 500, body contains `multiple org IDs present` (the fan-out switch is never set). If it fails with `clickhouse not reachable`, start the server per Global Constraints first.
+Expected: FAIL on the first `index/stats` assertion — `expected: 200, actual: 500`, message `multiple org IDs present` (the fan-out switch is never set). (Verified during plan review: pushes are visible immediately, the failure is deterministic.) If it fails with `clickhouse not reachable`, start the server per Global Constraints first.
 If the push or storage is not yet visible (flaky), apply Review Focus item 4 to the first fan-out GET only, and re-run to confirm the failure is still the 500.
 
 - [ ] **Step 3: Implement the wiring**
@@ -124,11 +131,11 @@ Nothing else in `newAPI` changes. The engine/Meta wiring at lines 240-244 stays 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `go test ./internal/server/ -run TestRun_MultiTenantFanout -count=1 -v`
-Expected: PASS. All five assertions hold: fan-out merged on `index/stats`, `index/volume`, `patterns` and single-tenant scoping on `index/stats`.
+Expected: PASS (verified during plan review, `-count=3`): fan-out merged on `index/stats` (`{"streams":2,"chunks":2,"bytes":22,"entries":2}`), `index/volume`, `detected_labels`, `patterns` accepted, and single-tenant scoping on `index/stats`.
 
 - [ ] **Step 5: Run the neighbouring packages**
 
-Run: `go test ./internal/server/... ./internal/multitenant/... ./internal/api/... -count=1`
+Run: `go test ./internal/server/... ./internal/multitenant/... ./internal/api/... ./internal/pushdown/... -count=1`
 Expected: PASS (no behaviour change for the engine path or single-tenant requests).
 
 - [ ] **Step 6: Strengthen the disabled-rejection test**
@@ -144,7 +151,7 @@ In `internal/multitenant/querier_test.go`, `TestMultiTenant_IndexDisabledRejects
 Also update the stale comment above `newMTServer` (lines 29-31): it says the helper builds the API *"the way server.newAPI will after Task 10 wiring"* — reword to state that production `server.newAPI` sets the same fields (`newMTServer` mirrors its wiring, only with a test `config`).
 
 Run: `go test ./internal/multitenant/... -count=1`
-Expected: PASS. If the observed code on the disabled path is not 500, pin the observed value — the invariant is that both flag values produce the same rejection on this endpoint while the flag is off.
+Expected: PASS. (Verified during plan review: the disabled path answers exactly `500` with body `multiple org IDs present`.)
 
 - [ ] **Step 7: Commit**
 
@@ -157,7 +164,7 @@ git commit -m "fix: fan the index and drilldown endpoints out per tenant when mu
 
 **Files:**
 - Modify: `docs/divergences.md` — "Multi-tenant queries" entry (currently narrowed by commit `5c69976`)
-- Modify: `docs/reference/configuration.md` — the `query.querier.multi_tenant_queries_enabled` row (currently `:164`)
+- Modify: `docs/reference/configuration.md` — the `query.querier.multi_tenant_queries_enabled` row (currently `:170`)
 - Modify: `CHANGELOG.md` — `## [Unreleased]`
 
 **Interfaces:**
@@ -166,7 +173,7 @@ git commit -m "fix: fan the index and drilldown endpoints out per tenant when mu
 
 - [ ] **Step 1: Update the divergence entry**
 
-In `docs/divergences.md`, replace the "Multi-tenant queries" bullet with the entry restored to the (now true) scope, keeping the corrections commit `5c69976` added (engine-path wording, `detected_fields`):
+In `docs/divergences.md`, replace the "Multi-tenant queries" bullet (line 28, a single line) with the entry restored to the (now true) scope, keeping the corrections commit `5c69976` added (engine-path wording, `detected_fields`):
 
 ```markdown
 - **Multi-tenant queries** (`query.querier.multi_tenant_queries_enabled`): Rúnakefli reuses Loki's `pkg/querier/multi_tenant_querier.go` fan-out for the log and sample select paths (`query`, `query_range`), `label/values*`, `series`, `detected_fields` (through the query engine), `index/stats`, `index/volume`, `index/volume_range`, `detected_labels` and `patterns`. Rúnakefli does not serve `detected_metric_names`, and the tail is single-tenant. With the flag on, multi-tenant queries always run on the plain engine (no ClickHouse push-down, which is single-tenant by construction).
@@ -174,7 +181,7 @@ In `docs/divergences.md`, replace the "Multi-tenant queries" bullet with the ent
 
 - [ ] **Step 2: Update the configuration reference row**
 
-In `docs/reference/configuration.md`, in the `query.querier.multi_tenant_queries_enabled` row, replace the "It does **not** cover … (#42)" sentence (everything after `detected_fields`.) with:
+In `docs/reference/configuration.md`, in the `query.querier.multi_tenant_queries_enabled` row, replace everything from "It does **not** cover" up to and including "(#42)." (the row's closing ` |` stays) with:
 
 ```markdown
 This also applies to `index/stats`, `index/volume`, `index/volume_range`, `detected_labels` and `patterns`; the tail is single-tenant.
@@ -182,7 +189,7 @@ This also applies to `index/stats`, `index/volume`, `index/volume_range`, `detec
 
 - [ ] **Step 3: CHANGELOG**
 
-In `CHANGELOG.md` under `## [Unreleased]`: remove the `### Changed` entry about the fan-out scope that mentions #42 (it described the gap this commit closes), and add under `### Fixed`:
+In `CHANGELOG.md` under `## [Unreleased]`: remove the first `### Changed` bullet (line 11, "The `multi_tenant_queries_enabled` documentation now matches the server: … (#42).") — it described the gap this commit closes — and add under the existing `### Fixed` heading (keep its rclone bullet):
 
 ```markdown
 - The index and drilldown endpoints (`index/stats`, `index/volume`, `index/volume_range`, `detected_labels`, `patterns`) now fan out per tenant with `query.querier.multi_tenant_queries_enabled: true`, as documented since 0.7.0. The server wiring was missing, so they answered `multiple org IDs present` (500) even with the flag on (#42).
