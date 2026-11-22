@@ -11,6 +11,7 @@ changelog (`debian/changelog`) carries the same releases.
 - `clickhouse.tls` (`enabled`, `ca_file`, `cert_file`, `key_file`, `server_name`, `insecure_skip_verify`): the native ClickHouse connection can now use TLS (e.g. native-TLS servers and ClickHouse Cloud's port 9440), with the material read and validated at startup like `password_file`. Rúnakefli also warns at startup when TLS is off and `clickhouse.addr` names a non-loopback address. Until now the transport was cleartext-only (#45).
 
 ### Changed
+
 - New divergences recorded from validating the tail delete path (#46): live tail polls hide lines covered by pending deletes, where Loki's live tail streams them unfiltered (Rúnakefli is stricter), and a failed delete-requests fetch fails the query or tail instead of Loki's serve-unfiltered.
 - CI: the `docs` workflow mirrors the site to S3 with `rclone` instead of `s3cmd`. Only files whose content changed are uploaded (the apt packages already in the bucket are skipped), uploads are single requests instead of multipart, and requests that the store answers with 503 are retried with a backoff for several minutes, so a Backblaze hiccup no longer fails the job.
 - CI: the `docs` workflow copies the site to S3 on releases only. A push to `main` still publishes to GitHub Pages, but no longer uploads to the bucket or deletes stale objects there.
