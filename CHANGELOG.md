@@ -8,7 +8,7 @@ changelog (`debian/changelog`) carries the same releases.
 
 ### Added
 
-- `clickhouse.tls` (`enabled`, `ca_file`, `cert_file`, `key_file`, `server_name`, `insecure_skip_verify`): the native ClickHouse connection can now use TLS (e.g. native-TLS servers and ClickHouse Cloud's port 9440), with the material read and validated at startup like `password_file`. Until now the transport was cleartext-only (#45).
+- `clickhouse.tls` (`enabled`, `ca_file`, `cert_file`, `key_file`, `server_name`, `insecure_skip_verify`): the native ClickHouse connection can now use TLS (e.g. native-TLS servers and ClickHouse Cloud's port 9440), with the material read and validated at startup like `password_file`. Rúnakefli also warns at startup when TLS is off and `clickhouse.addr` names a non-loopback address. Until now the transport was cleartext-only (#45).
 
 ### Changed
 - New divergences recorded from validating the tail delete path (#46): live tail polls hide lines covered by pending deletes, where Loki's live tail streams them unfiltered (Rúnakefli is stricter), and a failed delete-requests fetch fails the query or tail instead of Loki's serve-unfiltered.

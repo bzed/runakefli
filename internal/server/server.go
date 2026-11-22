@@ -68,6 +68,7 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 	if logger == nil {
 		logger = log.NewNopLogger()
 	}
+	warnCleartextTransport(logger, cfg)
 	conn, err := openClickHouse(ctx, cfg)
 	if err != nil {
 		return err
