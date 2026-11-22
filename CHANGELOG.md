@@ -6,6 +6,10 @@ changelog (`debian/changelog`) carries the same releases.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-22
+
+Security release: the three confirmed issues of the November audit (#42, #44, #45) are fixed — the index and drilldown endpoints fan out per tenant again, the release workflow can no longer run signing-key scripts from an unreviewed tag, and the ClickHouse transport can be encrypted.
+
 ### Added
 
 - `clickhouse.tls` (`enabled`, `ca_file`, `cert_file`, `key_file`, `server_name`, `insecure_skip_verify`): the native ClickHouse connection can now use TLS (e.g. native-TLS servers and ClickHouse Cloud's port 9440), with the material read and validated at startup like `password_file`. Rúnakefli also warns at startup when TLS is off and `clickhouse.addr` names a non-loopback address. Until now the transport was cleartext-only (#45).

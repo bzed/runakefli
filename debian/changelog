@@ -1,3 +1,22 @@
+runakefli (1.1.0) trixie; urgency=medium
+
+  * New clickhouse.tls block (enabled, ca_file, cert_file, key_file,
+    server_name, insecure_skip_verify): the native ClickHouse connection
+    can use TLS, e.g. ClickHouse Cloud's port 9440; a startup warning
+    fires when TLS is off and the address is not loopback.
+  * The index and drilldown endpoints (index/stats, index/volume*,
+    detected_labels, patterns) fan out per tenant again with
+    multi_tenant_queries_enabled, as documented since 0.7.0.
+  * The apt repository is signed with a new Ed25519 key; its private part
+    lives only in the apt-signing GitHub environment and the maintainer's
+    password store. Users must re-install the keyring, or apt reports an
+    unknown signature.
+  * Release workflow hardening: the docs workflow builds from reviewed
+    main, and the signing job is gated by the environment's deployment
+    rules (main and v* tags only).
+
+ -- Bernd Zeimetz <bernd@bzed.de>  Sun, 22 Nov 2026 11:25:19 +0100
+
 runakefli (1.0.0) trixie; urgency=medium
 
   * First stable release; the documentation no longer calls Rúnakefli a
