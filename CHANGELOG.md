@@ -8,7 +8,6 @@ changelog (`debian/changelog`) carries the same releases.
 
 ### Changed
 
-- The `multi_tenant_queries_enabled` documentation now matches the server: the per-tenant fan-out covers the query endpoints, `series`, label names/values and `detected_fields`, but not `index/stats`, `index/volume`, `index/volume_range`, `detected_labels` and `patterns` — those were never wired to it, so with either flag value they reject a multi-tenant `X-Scope-OrgID` with `multiple org IDs present` (500) (#42).
 - New divergence recorded: the ClickHouse connection is cleartext-only — there is no `clickhouse.tls` key, the password crosses the network in the first handshake packet, and TLS-only endpoints (ClickHouse Cloud's native port 9440) cannot be reached at all; TLS wiring stays on the roadmap (#45).
 - New divergences recorded from validating the tail delete path (#46): live tail polls hide lines covered by pending deletes, where Loki's live tail streams them unfiltered (Rúnakefli is stricter), and a failed delete-requests fetch fails the query or tail instead of Loki's serve-unfiltered.
 - CI: the `docs` workflow mirrors the site to S3 with `rclone` instead of `s3cmd`. Only files whose content changed are uploaded (the apt packages already in the bucket are skipped), uploads are single requests instead of multipart, and requests that the store answers with 503 are retried with a backoff for several minutes, so a Backblaze hiccup no longer fails the job.
@@ -16,6 +15,7 @@ changelog (`debian/changelog`) carries the same releases.
 
 ### Fixed
 
+- The index and drilldown endpoints (`index/stats`, `index/volume`, `index/volume_range`, `detected_labels`, `patterns`) now fan out per tenant with `query.querier.multi_tenant_queries_enabled: true`, as documented since 0.7.0. The server wiring was missing, so they answered `multiple org IDs present` (500) even with the flag on (#42).
 - CI: the `docs` workflow's `s3` job failed on every run because rclone sends `X-Amz-Acl: private`, which Backblaze B2 (the bucket behind `runakefli.app`) rejects with `InvalidArgument: Unsupported value for canned acl 'private'`. Ubuntu 24.04 ships rclone 1.60.1, which cannot be told to omit that header, so the job now installs a pinned rclone (v1.76.0, SHA-256 verified) and sets `RCLONE_CONFIG_S3_ACL=` so no `X-Amz-Acl` header is sent.
 
 ## [1.0.0] - 2026-11-21
