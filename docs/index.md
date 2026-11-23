@@ -48,11 +48,11 @@ Rúnakefli is a single static Go service that speaks
 [Loki](https://grafana.com/oss/loki/)'s HTTP API (push, LogQL queries,
 labels, series, tail, index statistics, deletes and the ruler) and stores the
 logs in [ClickHouse](https://clickhouse.com/). Your log shippers and dashboards
-keep talking to "Loki"; ClickHouse does the storage and the heavy lifting.
+keep talking to "Loki". ClickHouse does the storage and the query work.
 
-Use it when you already know and like Loki's API, LogQL and tooling, but want
-your logs in a ClickHouse you can also query with SQL, replicate, and scale like
-any other ClickHouse data.
+Use it when you already know and like Loki's API, LogQL and tooling, and you
+want your logs in a ClickHouse database. You can query that database with SQL,
+replicate it, and scale it like any other ClickHouse data.
 
 ## What you get
 
@@ -63,8 +63,9 @@ any other ClickHouse data.
     ---
 
     The same endpoints, the same LogQL, the same error messages and
-    configuration keys wherever Loki has them. Loki's own parser, engine and
-    ruler code is reused rather than re-implemented, at one pinned Loki commit.
+    configuration keys wherever Loki has them. Rúnakefli reuses Loki's own
+    parser, engine and ruler code rather than re-implementing it, at one pinned
+    Loki commit.
 
 -   **Proven equality**
 
@@ -130,10 +131,10 @@ counts):
 | plain log filter | 5.5 ms | 5.5 ms |
 | `unwrap` + `quantile_over_time` | **49 ms** | 56 ms |
 
-Rúnakefli is 1.7–4× faster on the aggregations and the `logfmt` filter, level
-with Loki on the plain log filter and `rate` with regex, and 1.1–1.2× slower on
-`unwrap` + `quantile_over_time`. Method, environment, the object-storage runs
-and caveats are in the [benchmark](benchmark.md).
+Rúnakefli is 1.7–4× faster on the aggregations and the `logfmt` filter. It is
+level with Loki on the plain log filter and `rate` with regex, and 1.1–1.2×
+slower on `unwrap` + `quantile_over_time`. Method, environment, the
+object-storage runs and caveats are in the [benchmark](benchmark.md).
 
 ## Quick start
 
@@ -155,8 +156,8 @@ and caveats are in the [benchmark](benchmark.md).
     ```
 
     The key's fingerprint is `6560 068E B9BB AB40 9577  ABDD 5862 6C8A 9047 C0E9`.
-    Edit `/etc/runakefli/runakefli.yaml` (the service is not started on
-    install), then `sudo systemctl enable --now runakefli`.
+    Edit `/etc/runakefli/runakefli.yaml`: the package does not start the service
+    on install. Then run `sudo systemctl enable --now runakefli`.
 
 === "Container"
 
@@ -252,18 +253,18 @@ details, including systemd.
 
 ### Is Rúnakefli a drop-in replacement for Loki?
 
-At the HTTP layer, yes: push, the LogQL query endpoints, labels and series,
+At the HTTP layer, yes. Push, the LogQL query endpoints, labels and series,
 tail, the delete API and the ruler API use Loki's paths, JSON shapes and
-headers, so a Grafana data source or log shipper only needs a new base URL.
-Storage is different (ClickHouse instead of Loki's chunks and index), so
-existing data is not read in place. The [migration guide](migrating.md) covers
+headers. A Grafana data source or a log shipper only needs a new base URL.
+Storage is different: ClickHouse instead of Loki's chunks and index. Existing
+data is not read in place. The [migration guide](migrating.md) covers
 the cutover and the [divergences](reference/divergences.md) list every
 observable difference.
 
 ### Why store logs in ClickHouse?
 
-ClickHouse is a column store built for fast scans and aggregations, can be
-queried with plain SQL, and replicates and scales as a cluster. Rúnakefli keeps
+ClickHouse is a column store built for fast scans and aggregations. You can
+query it with plain SQL. It replicates and scales as a cluster. Rúnakefli keeps
 the Loki interface people already use and moves the storage onto it.
 
 ### Which ClickHouse versions are supported?
@@ -280,8 +281,8 @@ tested in production. Back up the ClickHouse database before upgrading. See the
 ### How do I know it behaves like Loki?
 
 A differential test suite runs the same data and queries against real Loki and
-compares the answers, and Loki's own LogQL parser, engine and ruler code is
-reused rather than re-implemented.
+compares the answers. Rúnakefli also reuses Loki's own LogQL parser, engine
+and ruler code rather than re-implementing it.
 
 ### What is the license?
 
@@ -342,7 +343,7 @@ for the finds and their translations.
 ## Source and license
 
 The source code, the design spec and the detailed divergences list live in the
-[GitHub repository](https://github.com/bzed/runakefli); how CI, releases and
+[GitHub repository](https://github.com/bzed/runakefli). How CI, releases and
 the apt repository work is described in [Development](development.md). Rúnakefli is licensed
 under AGPL-3.0, see [About](about.md).
 
@@ -350,5 +351,5 @@ Loki® and Grafana® are trademarks of Grafana Labs. ClickHouse® is a registere
 trademark of ClickHouse, Inc. Debian is a registered trademark of Software in
 the Public Interest, Inc. Claude is a trademark of Anthropic. Rúnakefli is an
 independent project, not affiliated with, endorsed or sponsored by Grafana Labs,
-ClickHouse, Inc. or any of the others; the names are used only to say what it
+ClickHouse, Inc. or any of the others. The names are used only to say what it
 works with. The logo is original artwork and does not use their logos.

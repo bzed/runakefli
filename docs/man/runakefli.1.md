@@ -38,7 +38,7 @@ On start it creates the database and tables it needs, then listens on
     that was interrupted finishes on the next run; on a current database the
     option does nothing.
     A configuration that reads the password from a systemd credential needs
-    *CREDENTIALS_DIRECTORY*, which only a unit provides: run
+    *CREDENTIALS_DIRECTORY*, which only a unit provides. Run
     *systemd-run --pty --wait --collect -p ImportCredential='runakefli.\*'
     /usr/bin/runakefli -config.file ... -config.expand-env -schema.migrate*.
 

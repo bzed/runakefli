@@ -74,6 +74,23 @@ enforces the mechanical ones; reviewers enforce the rest.
   `require.Eventually` and a generous timeout.
 - Tests never write outside `t.TempDir()` and never use `$HOME`.
 
+## Documentation
+
+- Written documentation follows the ASD-STE100 standard (Simplified Technical
+  English) to 80 %: `README.md`, `CONTRIBUTING.md`, `SECURITY.md`, the man
+  page and `docs/` (site pages, reference pages, `divergences.md`).
+- What makes a text comply at 80 %: one topic per sentence; short sentences;
+  active voice; present tense; procedures as imperative steps, one instruction
+  per step; the approved word forms of the standard where they are clear; no
+  vague quantity words (`some`, `several`, `a few`) — give the number or write
+  `approximately`; one term per concept, used consistently.
+- Exempt: quoted text, configuration keys, flags, error messages and code
+  paths (kept verbatim), the runology story in "The name", and historical
+  records (`CHANGELOG.md`, `REVIEW.md`, the dated entries under
+  `docs/superpowers/`).
+- A change fixes the wording it touches; a change that rewrites a page applies
+  the rule to the whole page.
+
 ## Lint suppressions
 
 `//nolint:<linter> // <reason>` only, always with the specific linter and a

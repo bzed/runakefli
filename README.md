@@ -22,8 +22,8 @@ Rúnakefli (`runakefli` on the command line and in packages) is a single static 
 [Loki](https://grafana.com/oss/loki/)'s HTTP API (push, LogQL queries,
 labels, series, tail, index statistics, deletes and the ruler) and stores the
 logs in [ClickHouse](https://clickhouse.com/). Point Grafana®, Alloy or
-Promtail at it as if it were Loki; ClickHouse does the storage and the heavy
-lifting.
+Promtail at it as if it were Loki. ClickHouse does the storage and the query
+work.
 
 **Built with**
 [![Go](https://img.shields.io/badge/Go-00ADD8?logo=go&logoColor=white)](https://go.dev/)
@@ -35,9 +35,9 @@ lifting.
 ## What you get
 
 - **Loki's API, unchanged.** The same endpoints, the same LogQL, the same error
-  messages and configuration keys wherever Loki has them. Loki's own parser,
-  engine and ruler code is reused rather than re-implemented, at one pinned Loki
-  commit.
+  messages and configuration keys wherever Loki has them. Rúnakefli reuses
+  Loki's own parser, engine and ruler code rather than re-implementing it, at
+  one pinned Loki commit.
 - **Proven equality.** A differential test suite (the "oracle") runs the same
   data and queries against real Loki and compares the answers. Every accepted
   difference is listed, with its reason, in
@@ -119,11 +119,11 @@ speculative stream read, which is why its plain log filter is still 8 ms):
 | plain log filter | **5** | 6 | **5** | 8 |
 | `unwrap` + `quantile_over_time` | **48** | 56 | **61** | 63 |
 
-Rúnakefli is 1.7–4× faster on the aggregations and the `logfmt` filter, level
-with Loki on the plain log filter and `rate` with regex, and 1.1–1.2× slower on
-`unwrap` + `quantile_over_time`; `labels` (about 2 ms) and `series` (2–3 ms)
-are 1–2 ms slower than Loki's. Without ClickHouse's filesystem cache, S3 reads add
-2–13 ms.
+Rúnakefli is 1.7–4× faster on the aggregations and the `logfmt` filter. It is
+level with Loki on the plain log filter and `rate` with regex, and 1.1–1.2×
+slower on `unwrap` + `quantile_over_time`. The `labels` endpoint
+(approximately 2 ms) and the `series` endpoint (2–3 ms) are 1–2 ms slower
+than Loki's. Without ClickHouse's filesystem cache, S3 reads add 2–13 ms.
 
 Method, environment and caveats: [`docs/benchmark.md`](docs/benchmark.md).
 
@@ -145,8 +145,8 @@ $ sudo apt update && sudo apt install runakefli
 ```
 
 The key's fingerprint is `6560 068E B9BB AB40 9577  ABDD 5862 6C8A 9047 C0E9`.
-Edit `/etc/runakefli/runakefli.yaml` (the service is not started on install),
-then `sudo systemctl enable --now runakefli`.
+Edit `/etc/runakefli/runakefli.yaml`: the package does not start the service on
+install. Then run `sudo systemctl enable --now runakefli`.
 
 **Container** (linux/amd64, linux/arm64):
 
@@ -209,7 +209,7 @@ Loki® and Grafana® are trademarks of Grafana Labs. ClickHouse® is a registere
 trademark of ClickHouse, Inc. Debian is a registered trademark of Software in
 the Public Interest, Inc. Claude is a trademark of Anthropic. Rúnakefli is an
 independent project, not affiliated with, endorsed or sponsored by Grafana Labs,
-ClickHouse, Inc. or any of the others; the names are used only to say what it
+ClickHouse, Inc. or any of the others. The names are used only to say what it
 works with. The logo is original artwork and does not use their logos.
 
 ## License

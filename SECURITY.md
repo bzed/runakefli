@@ -4,21 +4,21 @@ Only the latest release and `main` are supported.
 
 ## Reporting a vulnerability
 
-Please do not open a public issue. Report it privately, either
+Do not open a public issue. Report the vulnerability privately, either
 
 - through GitHub: <https://github.com/bzed/runakefli/security/advisories/new>, or
 - by e-mail to bernd@bzed.de.
 
 Include the version (`runakefli -version`), the configuration keys involved
-(without secrets) and a way to reproduce it. You will get an answer within a
-week. Fixes are released as soon as they are ready and credited in
+(without secrets) and a way to reproduce it. You get an answer within one
+week. Fixes are released as soon as they are ready. They are credited in
 [`CHANGELOG.md`](CHANGELOG.md) unless you prefer otherwise.
 
 ## Scope
 
 In scope: the Rúnakefli binary, its HTTP API, the Debian package, the container
 image and the apt repository. Vulnerabilities in Loki or ClickHouse
-themselves belong to those projects; if Rúnakefli reuses the affected Loki code
+themselves belong to those projects. If Rúnakefli reuses the affected Loki code
 at its pinned commit (`LOKI_COMMIT` in the `Makefile`), tell us as well.
 
 ## Verifying downloads

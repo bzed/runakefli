@@ -64,14 +64,14 @@ One-time repository settings (maintainer, not the implementer):
 `scripts/build-apt-repo.sh` builds the repository with reprepro from
 `apt/conf/distributions`: suite `trixie` holds the latest release (amd64 and
 arm64), suite `trixie-snapshot` the latest build of `main`. A run of
-`docs.yml` rebuilds both: the one it does not build is carried over (`trixie`
-from the latest GitHub release, `trixie-snapshot` from the published site).
+`docs.yml` rebuilds both: the suite it does not build is carried over. `trixie` comes from
+the latest GitHub release, `trixie-snapshot` from the published site.
 Only `runakefli_*.deb` files are carried over: releases up to 0.14.0 contain the
 old `lokihouse` package and are skipped, so `trixie` stays empty until the first
 release under the new name.
 
 The signing key is an Ed25519 key without a passphrase. The private key lives
-only in the secret `APT_GPG_PRIVATE_KEY` (ASCII-armoured); the public key is
+only in the secret `APT_GPG_PRIVATE_KEY` (ASCII-armoured). The public key is
 committed as `apt/runakefli-archive-keyring.asc`, and the job fails if the two
 do not match. To rotate it:
 
@@ -88,7 +88,7 @@ Users must fetch the new public key, so rotate rarely.
 **Tag protection is key protection.** In a release run (`v*` tag push) the
 `build` and `apt` jobs of `docs.yml` check out `main`, not the tagged commit,
 and the `apt` job runs under the `apt-signing` environment. This only helps
-for tags on commits that contain it: the workflow files themselves
+for tags on commits that contain it. The workflow files themselves
 (`release.yml`, `docs.yml`, `deb.yml`) are always read from the tagged
 commit, so a tag on an older commit, or on one whose `docs.yml` drops the
 pin, runs that commit's scripts. Keep `APT_GPG_PRIVATE_KEY` as an

@@ -34,13 +34,13 @@ disabled). See [Memory](#memory).
 ### Memory
 
 Each push is decompressed and validated in memory before it reaches the rate
-limiter. With `distributor.max_inflight_bytes` set, the budget bounds the
-received bodies held at once; the parsed request is charged after parsing, so
+limiter. When `distributor.max_inflight_bytes` is set, the budget bounds the
+received bodies held at once. The parsed request is charged after parsing, so
 the peak can exceed the budget by the pushes that were already admitted.
 `max_push_size` bounds a single push, not their sum. Size the process limit
-above the budget: set `GOMEMLIMIT` (for example `4GiB`) so the Go runtime
-collects sooner, and a systemd `MemoryMax=` or the container's memory limit
-(for example `5G`) so the kernel stops a runakefli that grows past it instead
+above the budget. Set `GOMEMLIMIT` (for example `4GiB`) so the Go runtime
+collects sooner. Set a systemd `MemoryMax=` or the container's memory limit
+(for example `5G`) so the kernel stops a runakefli that grows past it, instead
 of the host's OOM killer choosing a victim.
 
 ### Query
@@ -60,13 +60,13 @@ of the host's OOM killer choosing a victim.
 | `max_query_parallelism` | Rúnakefli engine | Legs of one request evaluated at once; further legs run on the request's own goroutine. |
 
 Metric queries that Rúnakefli evaluates itself (parsers, `unwrap`) parse lines on
-`min(GOMAXPROCS, matching streams)` goroutines *per query*, so concurrent queries
-multiply the goroutine count while `GOMAXPROCS` (Go follows the cgroup CPU quota)
-bounds the CPU they use together. Set the `GOMAXPROCS` environment variable to
-limit it.
+`min(GOMAXPROCS, matching streams)` goroutines *per query*. Concurrent queries
+therefore multiply the goroutine count. `GOMAXPROCS` (Go follows the cgroup CPU
+quota) bounds the CPU they use together; set the `GOMAXPROCS` environment
+variable to limit it.
 
 Pieces of a split query reserve ClickHouse® connections from a budget of half of
-`clickhouse.max_open_conns` and never wait for it: when the budget or the
+`clickhouse.max_open_conns` and never wait for one. When the budget or the
 request's `max_query_parallelism` is used up, the leg runs on the request's own
 goroutine. Under load, queries degrade to sequential evaluation instead of
 queueing.
@@ -80,15 +80,15 @@ for the rate-limit strategy difference.
 
 ## Health checks
 
-`GET /ready` answers `200 ready` when Rúnakefli can reach ClickHouse (a ping with a 2 s deadline) and `503 ClickHouse not ready: <error>` otherwise. All Rúnakefli instances usually share one ClickHouse, so they become unready together; use `/ready` for load-balancer readiness, not for liveness or restarts.
+`GET /ready` answers `200 ready` when Rúnakefli can reach ClickHouse (a ping with a 2 s deadline) and `503 ClickHouse not ready: <error>` otherwise. All Rúnakefli instances usually share one ClickHouse, so they become unready together. Use `/ready` for load-balancer readiness, not for liveness or restarts.
 
 ## Deletes and disk space
 
-A processed delete request removes rows with lightweight `DELETE`s and then runs `ALTER TABLE logs_local APPLY DELETED MASK` (ON CLUSTER on a cluster), which rewrites only the parts that hold deleted rows. Deleted lines therefore leave the disk at the end of the compactor pass that processed the request, as with Loki's compactor. The rewrite costs I/O proportional to the affected parts; it runs once per pass, not once per request.
+A processed delete request removes rows with lightweight `DELETE`s and then runs `ALTER TABLE logs_local APPLY DELETED MASK` (ON CLUSTER on a cluster), which rewrites only the parts that hold deleted rows. Deleted lines therefore leave the disk at the end of the compactor pass that processed the request, as with Loki's compactor. The rewrite costs I/O proportional to the affected parts, and it runs once per pass, not once per request.
 
 ### `delete_requests` created by Rúnakefli 0.6.0 or earlier
 
-Up to 0.6.0, `delete_requests` was created as `ReplacingMergeTree` without its `version` column. A merge then keeps the last-inserted status of a request, not the newest one. When instances' clocks disagree, a cancelled request can come back as processed, or a processed one as received. Rúnakefli does not change existing tables. To rebuild the table on a single server, stop every Rúnakefli instance and run (database `runakefli`):
+Up to 0.6.0, `delete_requests` was created as `ReplacingMergeTree` without its `version` column. A merge then keeps the last-inserted status of a request, not the newest one. When the clocks of instances disagree, a cancelled request can come back as processed, or a processed request can come back as received. Rúnakefli does not change existing tables. To rebuild the table on a single server, stop every Rúnakefli instance and run (database `runakefli`):
 
 ```sql
 CREATE TABLE runakefli.delete_requests_new AS runakefli.delete_requests
@@ -102,7 +102,7 @@ On a cluster, do the same for `delete_requests_local` with `ON CLUSTER` and `Rep
 
 ## Retention
 
-Retention is applied by a sweeper that runs on every Rúnakefli instance every `compactor.compaction_interval` (see [Retention](reference/configuration.md#retention)). It applies the current configuration to all stored data and is idempotent, so several instances can sweep at the same time. Nothing expires while no Rúnakefli instance runs.
+Retention is applied by a sweeper that runs on every Rúnakefli instance every `compactor.compaction_interval` (see [Retention](reference/configuration.md#retention)). It applies the current configuration to all stored data and is idempotent, so more than one instance can sweep at the same time. Nothing expires while no Rúnakefli instance runs.
 
 The retention is not stored with each row. ClickHouse cannot change the columns of a table's partition or sorting key (`ALTER ... UPDATE` refuses them), so a stored value could never follow a configuration change.
 
@@ -163,13 +163,13 @@ false`, because pprof exposes allocation and call-stack internals.
 ## Multi-tenant queries
 
 `query.querier.multi_tenant_queries_enabled` (default `false`) accepts a
-comma-separated list of org IDs in `X-Scope-OrgID` (e.g. `tenant-a,tenant-b`)
-on the query, series and label endpoints and returns the merged result over
-the listed tenants, as Loki's multi-tenant querier does. The `__tenant_id__`
-label is always set on returned streams and series so the sources can be
-told apart. The index stats, volume, `detected_labels` and `patterns`
-endpoints fan out as well; `detected_metric_names` is not served (see the
-[divergences](https://github.com/bzed/runakefli/blob/main/docs/divergences.md#query)).
+comma-separated list of org IDs in `X-Scope-OrgID` (for example
+`tenant-a,tenant-b`) on the query, series and label endpoints and returns the
+merged result over the listed tenants, as Loki's multi-tenant querier does. The
+`__tenant_id__` label is always set on returned streams and series so the
+sources can be told apart. The index stats, volume, `detected_labels` and
+`patterns` endpoints fan out as well; `detected_metric_names` is not served (see
+the [divergences](https://github.com/bzed/runakefli/blob/main/docs/divergences.md#query)).
 Multi-tenant queries run on the plain engine, not the ClickHouse pushdown
 path.
 

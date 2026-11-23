@@ -46,9 +46,9 @@ unit (dynamic user, state in `/var/lib/runakefli`) and
 `/etc/runakefli/runakefli.yaml`. It does **not** start the service: edit the
 config first (at least `clickhouse.addr`; see
 [the configuration reference](../reference/configuration.md)). The file lists
-every option with its default, commented out; uncomment and change what you
-need, for example `limits_config.retention_period` (data is kept forever by
-default). Then:
+every option with its default, commented out. Uncomment and change what you
+need, for example `limits_config.retention_period` (by default, data is kept
+forever). Then:
 
 ```sh
 sudo systemctl enable --now runakefli
@@ -58,7 +58,7 @@ curl -fsS http://localhost:3100/ready
 The default listen address is `127.0.0.1`; change `server.http_listen_address`
 to accept remote clients. Put the ClickHouse password in a systemd credential
 as described in `/usr/share/doc/runakefli/README.Debian`. `apt upgrade` keeps
-Rúnakefli current; each release also has its `.deb` files and a `SHA256SUMS`
+Rúnakefli current. Each release also has its `.deb` files and a `SHA256SUMS`
 file on the [GitHub releases page](https://github.com/bzed/runakefli/releases).
 Then continue with [Step 5: first push and query](#step-5-first-push-and-query).
 
@@ -72,10 +72,10 @@ podman run -d --name runakefli -p 3100:3100 \
 
 (`docker run` works the same.) The image is based on distroless `static`, runs
 as a non-root user and listens on `0.0.0.0:3100`. To reach it on another host
-port, just map it (`-p 8080:3100`). To change the port inside the container,
+port, map it (`-p 8080:3100`). To change the port inside the container,
 set `RUNAKEFLI_HTTP_LISTEN_PORT` and map that port (`-e
-RUNAKEFLI_HTTP_LISTEN_PORT=8080 -p 8080:8080`); it must be above 1023, as the
-container runs as non-root. The built-in config reads these variables:
+RUNAKEFLI_HTTP_LISTEN_PORT=8080 -p 8080:8080`). The port must be above 1023,
+because the container runs as a non-root user. The built-in config reads these variables:
 `RUNAKEFLI_HTTP_LISTEN_PORT` (default `3100`), `RUNAKEFLI_CLICKHOUSE_ADDR` (default `clickhouse:9000`),
 `RUNAKEFLI_CLICKHOUSE_DATABASE` (`runakefli`), `RUNAKEFLI_CLICKHOUSE_USER`
 (`default`), `RUNAKEFLI_CLICKHOUSE_PASSWORD` and `RUNAKEFLI_CLICKHOUSE_PASSWORD_FILE`
@@ -85,8 +85,8 @@ container runs as non-root. The built-in config reads these variables:
 
 The quick way is `-e RUNAKEFLI_CLICKHOUSE_PASSWORD=secret`. Environment
 variables show up in `docker inspect` and `/proc`, and the value must not
-contain a single quote, so prefer a file: mount it read-only and point
-`RUNAKEFLI_CLICKHOUSE_PASSWORD_FILE` at it. Set only one of the two; setting
+contain a single quote. Prefer a file: mount it read-only and point
+`RUNAKEFLI_CLICKHOUSE_PASSWORD_FILE` at it. Set only one of the two. Setting
 both is a startup error.
 
 ```sh
@@ -153,7 +153,7 @@ An equivalent one-liner:
 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o bin/runakefli ./cmd/runakefli
 ```
 
-Copy `bin/runakefli` to its final location, e.g. `/usr/local/bin/runakefli`.
+Copy `bin/runakefli` to its final location, for example `/usr/local/bin/runakefli`.
 
 ### Step 2 — Write the config
 
@@ -354,9 +354,9 @@ migration. Migrate once:
     operation (`DROP TABLE`, `SELECT` on `system.disks`); see
     [ClickHouse user and grants](../reference/configuration.md#clickhouse-user-and-grants).
 
-    It copies each table, so ClickHouse needs free disk space for a copy of the
-    largest table; the migration refuses to start with less. It can be run
-    again after a crash.
+    The migration copies each table. ClickHouse therefore needs free disk
+    space for a copy of the largest table; the migration refuses to start
+    with less. You can run it again after a crash.
 3. Start the instances.
 
 ### Upgrading to 0.11
@@ -364,12 +364,12 @@ migration. Migrate once:
 0.11 adds schema version 3 (structured-metadata and escaped-ASCII indexes on
 `logs`). Run the same migration (stop every instance, `-schema.migrate`, start).
 From version 2 it only alters `logs`: no copy and no extra disk space. Existing
-data is not re-indexed; the new indexes cover parts written or merged after the
+data is not re-indexed. The new indexes cover parts written or merged after the
 migration.
 
 ## ClickHouse cluster (optional)
 
-For a sharded/replicated ClickHouse cluster (e.g. 2 shards × 2 replicas),
+For a sharded/replicated ClickHouse cluster (for example 2 shards × 2 replicas),
 set these in the `clickhouse:` block:
 
 ```yaml
@@ -384,7 +384,7 @@ clickhouse:
 Rúnakefli creates `logs_local` / `streams_local` `Replicated*MergeTree`
 tables `ON CLUSTER` and `Distributed` `logs` / `streams` tables over them,
 sharded by `(tenant, stream_id)`. Inserts use `distributed_foreground_insert`
-and (when replicated) `insert_quorum`, so a push is acknowledged only when
+and, when replicated, `insert_quorum`. A push is acknowledged only when
 the rows are on a majority of replicas. Full cluster setup (Keeper,
 `remote_servers`, replica paths) is a ClickHouse operations task; see the
 [ClickHouse documentation](https://clickhouse.com/docs/en/enables/high-availability/overview)

@@ -44,7 +44,7 @@ HTTP server settings.
 | `server.graceful_shutdown_timeout` | duration | `30s` | How long to wait for in-flight requests on shutdown. |
 | `server.log_level` | string | `info` | Log level: `debug`, `info`, `warn`, `error`. |
 | `server.log_format` | string | `logfmt` | Log format: `logfmt` or `json`. |
-| `server.register_instrumentation` | bool | `true` | When true, serves `GET /metrics` and `/debug/pprof/*` (no tenant). Set `false` to disable both, e.g. on untrusted networks. |
+| `server.register_instrumentation` | bool | `true` | When true, serves `GET /metrics` and `/debug/pprof/*` (no tenant). Set `false` to disable both, for example on untrusted networks. |
 
 ## `auth_enabled`
 
@@ -71,13 +71,13 @@ Connection and topology settings for the ClickHouse® storage.
 | `clickhouse.replicated` | bool | `true` | When `clickhouse.cluster` is set: `true` = `Replicated*MergeTree` (replication), `false` = sharding without replication. Ignored in single-server mode. |
 | `clickhouse.replica_path` | string | server's `default_replica_path` | Replicated table path. Optional; the server default is used when omitted. |
 | `clickhouse.replica_name` | string | server's `default_replica_name` | Replica name template. Optional. |
-| `clickhouse.settings` | map | `{}` | Extra ClickHouse session settings, applied to every connection. Overrides topology defaults (e.g. `insert_quorum`, `distributed_product_mode`). |
+| `clickhouse.settings` | map | `{}` | Extra ClickHouse session settings, applied to every connection. Overrides topology defaults (for example `insert_quorum`, `distributed_product_mode`). |
 | `clickhouse.dial_timeout` | duration | `5s` | Timeout for opening a ClickHouse connection and for waiting for a free pooled connection. |
 | `clickhouse.read_timeout` | duration | `5m` | Longest wait for a packet from ClickHouse during a query or insert. |
 | `clickhouse.max_open_conns` | int | `100` | Connection pool size. Each in-flight push holds a connection until its async insert is flushed; pushes, queries, tails and delete processing share the pool. |
 | `clickhouse.max_idle_conns` | int | `20` | Idle connections kept open (≤ `max_open_conns`). |
 | `clickhouse.tls` | block | disabled | Native protocol over TLS; see [TLS](#tls) below. |
-| `clickhouse.tls.enabled` | bool | `false` | Connect over TLS (e.g. port 9440 on servers that enforce native TLS, or ClickHouse Cloud). Enabled alone uses the system root CAs and verifies each address's own host name. |
+| `clickhouse.tls.enabled` | bool | `false` | Connect over TLS (for example port 9440 on servers that enforce native TLS, or ClickHouse Cloud). Enabled alone uses the system root CAs and verifies each address's own host name. |
 | `clickhouse.tls.ca_file` | string | `""` | PEM CA bundle used instead of the system roots. Read at startup; an unreadable file or one without a PEM certificate is a startup error. |
 | `clickhouse.tls.cert_file` | string | `""` | Client certificate for mutual TLS, set together with `clickhouse.tls.key_file`. Read at startup; an error is a startup error. |
 | `clickhouse.tls.key_file` | string | `""` | Client private key for mutual TLS, set together with `clickhouse.tls.cert_file`. Read at startup; an error is a startup error. |
@@ -86,7 +86,7 @@ Connection and topology settings for the ClickHouse® storage.
 
 ### Password handling
 
-`clickhouse.password` and `clickhouse.password_file` are mutually exclusive; setting both is an
+`clickhouse.password` and `clickhouse.password_file` are mutually exclusive. Setting both is an
 error. `clickhouse.password_file` is read at startup; if the file is missing or
 unreadable, Rúnakefli refuses to start. The file's contents are trimmed of
 trailing `\r\n`.
@@ -101,6 +101,7 @@ the network unencrypted once the connection leaves loopback (see the
 [divergences](https://runakefli.app/divergences/#storage-transport)); see
 [TLS](#tls) below.
 
+
 The container image's built-in config maps `RUNAKEFLI_CLICKHOUSE_PASSWORD` to
 `clickhouse.password` and `RUNAKEFLI_CLICKHOUSE_PASSWORD_FILE` to
 `clickhouse.password_file`; see
@@ -113,7 +114,7 @@ With the default configuration (`clickhouse.tls.enabled: false`) the password
 and every log line cross the network in cleartext, so keep `clickhouse.addr` on
 loopback or enable TLS. `clickhouse.tls.enabled: true` wraps the native
 connection in TLS; the material named by `ca_file`, `cert_file` and `key_file`
-is read and validated at startup, like `clickhouse.password_file`, and a bad
+is read and validated at startup, like `clickhouse.password_file`. A bad
 or missing file stops Rúnakefli from starting. Leaving `server_name` empty with
 several addresses verifies each address against its own host name. The
 remaining caveat and the startup warning for non-loopback addresses are on the
@@ -146,7 +147,7 @@ GRANT SELECT ON system.parts TO runakefli;
 
 The user must not be `readonly`: Rúnakefli sets session settings such as
 `async_insert` and writes data. `system.tables` and `system.columns` need no
-grant; ClickHouse shows a user the entries it has access to.
+grant. ClickHouse shows a user the entries it has access to.
 
 **On a cluster** (`clickhouse.cluster` set) add, and issue the `GRANT`s
 `ON CLUSTER` (and `CREATE USER ... ON CLUSTER` unless users are replicated):
@@ -200,8 +201,8 @@ Settings for the background delete-processing and retention loops.
 | `compactor.delete_max_interval` | duration | `24h` | Default and upper bound of a delete request's `max_interval` parameter (a larger value is rejected with 400). |
 
 Whether delete requests are accepted at all is set by `limits_config.deletion_mode`
-(`filter-and-delete` by default; `filter-only` hides rows at query time without
-removing them; `disabled` rejects delete requests). Retention is applied
+(`filter-and-delete` by default). `filter-only` hides rows at query time without
+removing them. `disabled` rejects delete requests. Retention is applied
 by the sweeper; see [Retention](#retention).
 
 ## `ruler`
@@ -218,7 +219,7 @@ The most commonly set keys:
 | `ruler.rule_path` | Directory for rule files. **Default differs from Loki**: `rules-temp` relative to the working directory (Loki's single-binary default is `<common.path_prefix>/rules-temp`; Rúnakefli has no `path_prefix`). Set this explicitly. |
 | `ruler.alertmanager_url` | Alertmanager URL for alert notifications. |
 | `ruler.external_url` | External URL of the ruler (used in alert annotations). |
-| `ruler.remote_write` | Recording-rule remote-write configuration (e.g. to Prometheus). |
+| `ruler.remote_write` | Recording-rule remote-write configuration (for example to Prometheus). |
 | `ruler.wal` | WAL directory for the ruler. **Rúnakefli refuses to start** if this directory is empty or is the working directory, the rule storage directory, or `ruler.rule_path` (a safety measure; Loki would `os.RemoveAll` it). |
 | `ruler.enable_sharding` | **Rejected at startup.** Rúnakefli has no ruler ring; this must be `false`. |
 | `ruler.evaluation.mode` | `remote` is **rejected at startup** (no ring). Must be `local` (the default). |
@@ -274,7 +275,7 @@ code reads and ignores the rest. See
 retention or rate limit. See [Differences from Loki](https://github.com/bzed/runakefli/blob/main/docs/divergences.md).
 
 A push's received body is capped at 100 MiB (Loki's distributor default,
-fixed); its decompressed body is capped by `limits_config.max_push_size`
+fixed). Its decompressed body is capped by `limits_config.max_push_size`
 (default `2GB`). Bytes held by concurrent pushes are bounded separately by
 [`distributor.max_inflight_bytes`](#distributor).
 
@@ -288,7 +289,7 @@ bloom components or query frontend for them to configure.
 Loki's default is to keep data forever (`retention_period: 0s`). To expire
 data after a fixed time, set Loki's own retention keys. Retention is on by
 default (`compactor.retention_enabled: true`, unlike Loki, where it defaults to
-`false`); `false` turns the sweeper off and nothing expires.
+`false`). Setting it to `false` turns the sweeper off, and nothing expires.
 
 | Key | Default | Description |
 | --- | --- | --- |
@@ -317,10 +318,10 @@ How it works, and what differs from Loki:
   instance runs, as with Loki's compactor.
 - Expiry is on UTC midnight and counted from the log line's timestamp, not from
   the time of the push: a row stamped on UTC day D with a retention of N days
-  is removed once D+N is today or earlier (00:00 UTC on day D+N). It is kept for
-  between N-1 and N days after its timestamp (a 7-day retention keeps a row for
-  6 to 7 days), and a line that is already older than that when it is pushed is
-  removed by the next sweep.
+  is removed once D+N is today or earlier (00:00 UTC on day D+N). The row is
+  kept for between N-1 and N days after its timestamp (a 7-day retention keeps a
+  row for 6 to 7 days). A line that is already older than that when it is
+  pushed is removed by the next sweep.
 - Days older than the longest configured period (`retention_period` and every
   `retention_stream` period; none if `retention_period` is `0s`) are dropped as
   whole day partitions. That is the only step when there are no
