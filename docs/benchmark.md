@@ -39,7 +39,7 @@ fails the run.
     an empty ingester and answers the queries, so every chunk comes from S3,
     as for data older than the ingesters keep. Loki's embedded chunk cache is
     on (Loki enables it whenever no other chunk cache is configured, and it
-    cannot be switched off), so after the warm-up rounds chunks are served
+    cannot be switched off). After the warm-up rounds, chunks are served
     from memory.
   - **Rúnakefli S3** reads from ClickHouse with its MergeTree tables on S3
     and no local cache: every read goes to RustFS.
@@ -127,8 +127,8 @@ here.
 
 Loki answering recent data from its ingester is the noisiest figure here: its
 `logfmt filter` median has ranged from 25 ms to 82 ms across sessions, with
-p90 spikes above one second, and its `count_over_time` from 59 ms to 102 ms.
-Rúnakefli's figures and Loki's S3 figures stay within about 10 % between runs.
+p90 spikes above one second, and its `count_over_time` median from 59 ms to
+102 ms. Rúnakefli's figures and Loki's S3 figures stay within about 10 % between runs.
 Compare ratios within one table, not across sessions.
 
 ### Recent data, local disk
@@ -235,5 +235,5 @@ parallel. The 6 h run keeps the data in Loki's ingester (`max_chunk_age: 24h`),
 because flushed chunks drop out of its results after about 2 h 40 min.
 
 Re-run with `make bench` to refresh (`RUNAKEFLI_BENCH_SPAN` sets the data and
-query span); the tables are also written to `.cache/bench/results.md`.
+query span). The tables are also written to `.cache/bench/results.md`.
 

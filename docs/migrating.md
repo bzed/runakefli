@@ -8,7 +8,7 @@ Rúnakefli is a **drop-in at the HTTP layer**. The push endpoints, the LogQL
 query endpoints, the label/series metadata endpoints, the tail endpoint, the
 delete API and the ruler API all use the same paths, the same JSON shapes and
 the same headers as stock Loki®. Point a Grafana® datasource (or any other
-client) at Rúnakefli's base URL instead of Loki's and it works.
+client) at Rúnakefli's base URL instead of Loki's. It works.
 
 This page is a full cutover runbook. It covers:
 
@@ -55,12 +55,12 @@ This page is a full cutover runbook. It covers:
 
 These are the same differences the project records in
 [`docs/divergences.md`](https://github.com/bzed/runakefli/blob/main/docs/divergences.md),
-restated for a migrator. For each: what you will notice, why, and what to do
+restated for a migrator. For each: what you notice, why, and what to do
 about it.
 
 ### Tie order inside one stream and timestamp
 
-**What you'll notice:** entries that share a timestamp *within the same
+**What you notice:** entries that share a timestamp *within the same
 stream* may come back in a different order than Loki.
 
 **Why:** Loki preserves insertion order for equal timestamps inside one
@@ -68,13 +68,13 @@ stream; Rúnakefli cannot (ClickHouse does not keep insertion order for
 equal-timestamp rows).
 
 **What to do:** if a UI or downstream process relies on "Loki's insertion
-order" for same-timestamp entries in one stream, you will see a difference.
+order" for same-timestamp entries in one stream, you see a difference.
 Most workloads do not rely on this; if you do, bucket your processing by
 timestamp rather than by arrival order.
 
 ### `index/stats` and `index/volume` granularity
 
-**What you'll notice:** volume and index-statistics numbers for time ranges
+**What you notice:** volume and index-statistics numbers for time ranges
 that cut through an hour can differ from Loki's by roughly 15–30%.
 
 **Why:** Loki pro-rates per *chunk* (10-minute blocks); Rúnakefli pro-rates
@@ -97,7 +97,7 @@ hourly buckets in Rúnakefli, not Loki chunks. If you have a dashboard on
 
 ### `index/volume` matches Loki's *compactor* path, not its *querier* path
 
-**What you'll notice:** if your volume dashboards were built against Loki's
+**What you notice:** if your volume dashboards were built against Loki's
 live (querier) volume path, the numbers will shift when you move to
 Rúnakefli.
 
@@ -131,7 +131,7 @@ the rows the query-time filter hid".
 
 ### Tail delivery
 
-**What you'll notice:** a Grafana Live view (or any `/tail` client) may miss
+**What you notice:** a Grafana Live view (or any `/tail` client) may miss
 entries that Loki would have delivered live.
 
 **Why:** Loki streams tail entries to the WebSocket client as its ingesters
@@ -154,11 +154,11 @@ plus 10-second lookback is indistinguishable from push.
 
 ### Retention
 
-**What you'll notice:** `retention_period` and `retention_stream` work, with
+**What you notice:** `retention_period` and `retention_stream` work, with
 Loki's keys and semantics, but expiry is done by a sweeper on ClickHouse day
 partitions: on UTC midnight, counted from each entry's timestamp, in whole
-days. The sweeper applies the current configuration to stored data as well, and
-removed rows leave the disk at the end of the sweep.
+days. The sweeper applies the current configuration to stored data too.
+Removed rows leave the disk at the end of the sweep.
 
 **What to do:** read [Retention](reference/configuration.md#retention).
 Loki keeps data forever by default, and so does Rúnakefli: set
@@ -172,7 +172,7 @@ keep Loki's behaviour.
 
 ### No per-tenant overrides
 
-**What you'll notice:** Rúnakefli does not read Loki's runtime configuration
+**What you notice:** Rúnakefli does not read Loki's runtime configuration
 (`overrides:` per tenant). `limits_config` applies to every tenant.
 
 **What to do:** if tenants have different limits or retention in Loki, run one
@@ -180,7 +180,7 @@ Rúnakefli instance (with its own ClickHouse database) per limit profile.
 
 ### Ruler sharding — no ring
 
-**What you'll notice:** if you run more than one Rúnakefli instance, alerts
+**What you notice:** if you run more than one Rúnakefli instance, alerts
 and recording-rule samples are **duplicated**.
 
 **Why:** Loki distributes rule groups over a ring of rulers; Rúnakefli has no
@@ -194,8 +194,8 @@ rulers for load, that is not yet supported.
 
 ### Ruler `rule_path` default
 
-**What you'll notice:** if you were relying on Loki's default `rule_path`,
-your rule files will not be where Rúnakefli looks.
+**What you notice:** if you rely on Loki's default `rule_path`,
+your rule files are not where Rúnakefli looks.
 
 **Why:** Loki's single-binary default is `/rules` (more precisely
 `<common.path_prefix>/rules-temp`); Rúnakefli has no `path_prefix`, so its
@@ -207,7 +207,7 @@ them to).
 
 ### Ruler WAL directory guard
 
-**What you'll notice:** Rúnakefli may **refuse to start** where Loki would
+**What you notice:** Rúnakefli may **refuse to start** where Loki would
 have started (and deleted your rules).
 
 **Why:** with remote write enabled, Loki wipes `ruler.wal.dir`
@@ -216,12 +216,12 @@ directory is empty or is the working directory, the rule storage directory,
 or `rule_path` — because deleting those would be catastrophic.
 
 **What to do:** set `ruler.wal.dir` to a dedicated, empty-on-startup directory
-(e.g. `/var/lib/runakefli/ruler-wal`) that is distinct from `rule_path` and
+(for example `/var/lib/runakefli/ruler-wal`) that is distinct from `rule_path` and
 the rule storage dir.
 
 ### `/metrics` has fewer series than Loki's
 
-**What you'll notice:** `GET /metrics` works (unless
+**What you notice:** `GET /metrics` works (unless
 `server.register_instrumentation` is `false`), but it serves Rúnakefli's
 HTTP, push, discard and ruler metrics and the Go runtime metrics, not
 Loki's ingester, chunk store or compactor series. Dashboards and alerts built
@@ -246,9 +246,9 @@ first start).
 ### 2. Shadow push
 
 Point a **copy** of your push traffic at Rúnakefli's push endpoint while
-Loki keeps its own. The push JSON, headers and `X-Scope-OrgID` (if you use
-multi-tenancy) are identical, so a load balancer or push gateway that
-fan-out to both upstreams is the simplest option.
+Loki keeps its own. The push JSON, the headers and the `X-Scope-OrgID` header
+(if you use multi-tenancy) are identical. A load balancer or push gateway that
+fans out to both upstreams is therefore the simplest option.
 
 - If you have a push gateway in front of Loki, add Rúnakefli as a second
   upstream with the same weight.
@@ -299,7 +299,7 @@ this point.
 Point the Grafana datasource back at Loki's URL. Loki's data is untouched by
 the cutover (you were pushing to both in step 2), so any query that worked
 against Loki before the cutover still works. If you have already deleted data
-from Loki, that is not reversible — test on a copy of your data before you
+from Loki, that is not reversible: test on a copy of your data before you
 delete.
 
 ### 7. Decommission Loki (optional, after a soak period)

@@ -6,6 +6,10 @@ changelog (`debian/changelog`) carries the same releases.
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation standard: written documentation (`README.md`, `CONTRIBUTING.md`, `SECURITY.md`, the man page, the docs site) now follows the ASD-STE100 standard (Simplified Technical English) to 80 %, and the rule is recorded in `AGENTS.md`. The pages were corrected to follow it: long sentences were split, verb tense and voice made consistent, and vague quantity words replaced with numbers or `approximately`. No content changed.
+
 ## [1.2.0] - 2026-11-22
 
 Security release: the five issues of the second November audit (#37–#41) are fixed — OTLP ingest works, `filter-only` deletes no longer remove rows, push decoding is bounded by `distributor.max_inflight_bytes` and `max_push_size`, the tail limit is per tenant, and with auth disabled clients can no longer pick a tenant. **Behaviour change:** with `auth_enabled: false`, `X-Scope-OrgID` is now ignored and everything goes to tenant `fake`; setups that relied on the header must set `auth_enabled: true`.
